@@ -342,7 +342,7 @@ export function GroupBrainSettings({ rpcCall }) {
             onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMs: milliseconds(value) } }),
           }),
           h(NumberField, {
-            id: `${id}-follow-up-replies`, label: '窗口内续聊上限', value: draft.ambient.followUpMaxReplies, min: 0, max: 50,
+            id: `${id}-follow-up-replies`, label: '窗口内续聊上限', value: draft.ambient.followUpMaxReplies, min: 0, max: 100,
             help: '一次 @ 引发的连续对话最多续聊几条；0 表示关闭。', disabled,
             onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMaxReplies: value } }),
           }),

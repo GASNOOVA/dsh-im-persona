@@ -417,6 +417,11 @@ export class GroupBrain {
     } catch (error) {
       this.#logger.warn?.('[dsh-im] group brain message record failed:', error);
     }
+    // 同一条消息被重复投递（例如重连回放或多个桥接实例）时，不重复触发
+    // 自动接话/连续对话，否则会白白消耗接话额度并污染会话。
+    if (duplicate) {
+      return { direct: false, followUp: false, recorded: false, duplicate: true, blocks: [] };
+    }
     let outcome = 'record';
     try {
       outcome = this.#trigger?.observe({

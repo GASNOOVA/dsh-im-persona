@@ -380,3 +380,102 @@ test('a follow-up window message replies naturally without an @ mention', async 
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('queues replies for different members and answers each in order', async () => {
+  const SENDER_B = 'wxid_other';
+  const messages = [
+    { id: 'msg-a', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, body: '今天吃什么', createdAt: '2026-11-10T05:10:00+00:00', mentions: { self: false, userIds: [] } },
+    { id: 'msg-b', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_B, body: '我想吃火锅', createdAt: '2026-11-10T05:10:05+00:00', mentions: { self: false, userIds: [] } },
+  ];
+  const client = fakeClient({
+    messages,
+    latestCursor: '0',
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [] }],
+    members: [
+      { id: SENDER_ID, displayName: 'Zach' },
+      { id: SENDER_B, displayName: 'JYY' },
+      { id: OWN_ID, displayName: '大肥鱼版' },
+    ],
+  });
+  client.events = [
+    { cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-a', direction: 'incoming' } },
+    { cursor: '2', kind: 'message.committed', payload: { messageId: 'msg-b', direction: 'incoming' } },
+  ];
+  const prompts = [];
+  let pending = 2;
+  const home = await mkdtemp(join(tmpdir(), 'wp-queue-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain: fakeBrain({ direct: false, followUp: true }),
+    generate: async (request) => {
+      prompts.push(request.prompt);
+      // 第一轮特意慢一点，确保第二条消息已经进入队列。
+      await new Promise((resolve) => setTimeout(resolve, pending-- > 1 ? 40 : 5));
+      return `回复第${prompts.length}条`;
+    },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 2, 'each member should get a reply');
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[0], /Zach 刚刚说/u);
+    assert.match(prompts[0], /今天吃什么/u);
+    assert.match(prompts[1], /JYY 刚刚说/u);
+    assert.match(prompts[1], /我想吃火锅/u);
+    assert.deepEqual(client.sent.map((entry) => entry.text), ['回复第1条', '回复第2条']);
+    assert.equal(client.sent[0].mentions, undefined);
+    assert.ok((await bridge.status()).pendingReplies.length === 0);
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('merges consecutive messages from the same member into one reply', async () => {
+  const messages = [
+    { id: 'msg-1', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, body: '第一句', createdAt: '2026-11-10T05:10:00+00:00', mentions: { self: false, userIds: [] } },
+    { id: 'msg-2', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, body: '第二句', createdAt: '2026-11-10T05:10:01+00:00', mentions: { self: false, userIds: [] } },
+  ];
+  const client = fakeClient({
+    messages,
+    latestCursor: '0',
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }, { id: OWN_ID, displayName: '大肥鱼版' }],
+  });
+  client.events = [
+    { cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-1', direction: 'incoming' } },
+    { cursor: '2', kind: 'message.committed', payload: { messageId: 'msg-2', direction: 'incoming' } },
+  ];
+  const prompts = [];
+  const home = await mkdtemp(join(tmpdir(), 'wp-merge-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain: fakeBrain({ direct: false, followUp: true }),
+    generate: async (request) => {
+      prompts.push(request.prompt);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return '一起说';
+    },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 1, 'same member messages should merge');
+    assert.equal(client.sent.length, 1);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /第一句/u);
+    assert.match(prompts[0], /第二句/u);
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});

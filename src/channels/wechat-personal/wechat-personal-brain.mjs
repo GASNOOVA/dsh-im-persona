@@ -21,6 +21,12 @@ export const WECHAT_PERSONAL_TRANSCRIPT_LIMIT = 20;
 export const WECHAT_PERSONAL_COMPACT_TRANSCRIPT_LIMIT = 8;
 /** 连续对话（follow-up）复用会话时补充的最近消息条数。 */
 export const WECHAT_PERSONAL_COMPACT_FOLLOW_UP_LIMIT = 6;
+
+/** 每个群最多缓存的待回复任务数（含续聊与 @ 直连）。 */
+export const WECHAT_PERSONAL_REPLY_QUEUE_LIMIT = 100;
+
+/** 续聊回复前的合并窗口：同一成员连续快速发言时合并成一次回复。 */
+export const WECHAT_PERSONAL_REPLY_QUEUE_DELAY_MS = 120;
 /** 群名/成员缓存时间：避免每条消息都打 daemon。 */
 export const WECHAT_PERSONAL_GROUP_CACHE_MS = 60_000;
 /** SSE 断线后的重连等待。 */
@@ -58,6 +64,14 @@ function sleep(ms, signal) {
  * @param {{createdAt?:string,senderId?:string,body?:string}} message
  * @param {(id:string)=>string} nameOf
  */
+function compareEventCursors(left, right) {
+  const a = Number(left);
+  const b = Number(right);
+  if (Number.isFinite(a) && Number.isFinite(b)) return a - b;
+  if (left === right) return 0;
+  return String(left) > String(right) ? 1 : -1;
+}
+
 export function formatTranscriptLine(message, nameOf) {
   const sender = nameOf(message?.senderId ?? '') || textOf(message?.senderId) || '未知成员';
   return `[${formatClock(message?.createdAt)}] ${sender}：${textOf(message?.body)}`;
@@ -90,6 +104,8 @@ export class WechatPersonalGroupBridge {
   #startedAt = null;
   #groups = new Map();
   #groupCache = new Map();
+  #replyQueues = new Map();
+  #lastProcessedCursor = null;
 
   constructor({
     client,
@@ -191,6 +207,9 @@ export class WechatPersonalGroupBridge {
   /** 停止事件循环并等待其退出。 */
   async stop() {
     this.#running = false;
+    for (const queue of this.#replyQueues.values()) {
+      if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
+    }
     this.#abortController?.abort();
     const promise = this.#loopPromise;
     this.#loopPromise = null;
@@ -240,6 +259,9 @@ export class WechatPersonalGroupBridge {
         memberCount: group.memberCount,
         lastSeenAt: group.lastSeenAt,
       })),
+      pendingReplies: [...this.#replyQueues.entries()]
+        .filter(([, queue]) => queue.jobs.length > 0)
+        .map(([chatId, queue]) => ({ chatId, count: queue.jobs.length })),
     };
   }
 
@@ -263,7 +285,13 @@ export class WechatPersonalGroupBridge {
   }
 
   async #handleEvent(event) {
-    if (typeof event?.cursor === 'string' && event.cursor) await this.#saveCursor(event.cursor);
+    const cursor = textOf(event?.cursor);
+    // 同一条事件在一次运行内被重复投递（重连回放）时跳过，避免重复回复。
+    if (cursor && this.#lastProcessedCursor && compareEventCursors(cursor, this.#lastProcessedCursor) <= 0) return;
+    if (cursor) {
+      await this.#saveCursor(cursor);
+      this.#lastProcessedCursor = cursor;
+    }
     if (event?.kind !== 'message.committed') return;
     const payload = event.payload;
     if (!payload || typeof payload !== 'object') return;
@@ -315,13 +343,84 @@ export class WechatPersonalGroupBridge {
       if (observed?.direct) await this.#sendSleepReply({ event, group });
       return;
     }
+    // 同一个群的所有回复进入 FIFO 队列：多个群成员同时说话时依次回复，
+    // 不会因为一次生成耗时较久就丢掉后面的消息；同一成员的连续消息会合并成一次回复。
     if (observed?.direct) {
-      await this.#replyDirect({ event, observed, message });
+      this.#enqueueReply(chatId, { kind: 'direct', event, observed, message });
       return;
     }
     if (observed?.followUp) {
-      await this.#replyFollowUp({ event, message });
+      this.#enqueueReply(chatId, { kind: 'follow-up', event, message });
     }
+  }
+
+  #replyQueueFor(chatId) {
+    let queue = this.#replyQueues.get(chatId);
+    if (!queue) {
+      queue = { jobs: [], worker: null, timer: null };
+      this.#replyQueues.set(chatId, queue);
+    }
+    return queue;
+  }
+
+  #enqueueReply(chatId, job) {
+    const queue = this.#replyQueueFor(chatId);
+    if (job.kind === 'follow-up') {
+      const sameSender = queue.jobs.find((entry) => entry.kind === 'follow-up' && entry.event.senderId === job.event.senderId);
+      if (sameSender) {
+        sameSender.event = { ...job.event, text: `${sameSender.event.text}\n${job.event.text}` };
+        sameSender.message = job.message;
+        sameSender.merged = (sameSender.merged ?? 1) + 1;
+        return;
+      }
+    }
+    if (queue.jobs.length >= WECHAT_PERSONAL_REPLY_QUEUE_LIMIT) {
+      const index = queue.jobs.findIndex((entry) => entry.kind === 'follow-up');
+      if (index < 0) {
+        this.#logger.warn?.('[dsh-im:wechat-personal] reply queue is full, dropping the message');
+        return;
+      }
+      queue.jobs.splice(index, 1);
+      this.#logger.warn?.('[dsh-im:wechat-personal] reply queue is full, dropping an older follow-up');
+    }
+    // @ 直连优先于普通续聊，保证被点名时尽快回复；续聊留一个很短的合并窗口，
+    // 让同一成员的连续发言合并为一次回复。
+    if (job.kind === 'direct') {
+      queue.jobs.unshift(job);
+      if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
+      void this.#drainReplyQueue(chatId);
+      return;
+    }
+    queue.jobs.push(job);
+    if (!queue.worker && !queue.timer) {
+      queue.timer = setTimeout(() => {
+        queue.timer = null;
+        void this.#drainReplyQueue(chatId);
+      }, WECHAT_PERSONAL_REPLY_QUEUE_DELAY_MS);
+      queue.timer.unref?.();
+    }
+  }
+
+  #drainReplyQueue(chatId) {
+    const queue = this.#replyQueueFor(chatId);
+    if (queue.worker) return queue.worker;
+    if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
+    queue.worker = (async () => {
+      try {
+        while (queue.jobs.length > 0) {
+          const job = queue.jobs.shift();
+          try {
+            if (job.kind === 'direct') await this.#replyDirect(job);
+            else await this.#replyFollowUp({ event: job.event, message: job.message });
+          } catch (error) {
+            this.#logger.warn?.(`[dsh-im:wechat-personal] ${job.kind} reply failed:`, error?.message ?? error);
+          }
+        }
+      } finally {
+        queue.worker = null;
+      }
+    })();
+    return queue.worker;
   }
 
   async #isSleepingNow() {

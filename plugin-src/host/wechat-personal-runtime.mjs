@@ -36,6 +36,35 @@ import { HarnessClient } from '../../src/channels/weixin/harness-client.mjs';
 const DEFAULT_PERSONA_ID = DEFAULT_GROUP_BRAIN_SETTINGS.wechatPersonal.personaId;
 const CONNECT_TIMEOUT_MS = 20_000;
 
+// HMR 重载会重新实例化本模块，但同一宿主进程里的旧桥接实例可能还没被回收。
+// 用 globalThis 上的共享注册表记录活跃桥接，新实例启动前先停掉同一 daemon+账号的旧实例，
+// 避免多个 SSE 连接同时消费同一批群消息、重复写入长期记录/重复回复。
+const LIVE_BRIDGES_KEY = Symbol.for('dsh-im-persona.wechat-personal.live-bridges');
+const STALE_BRIDGE_STOP_TIMEOUT_MS = 5_000;
+
+function liveBridges() {
+  if (!globalThis[LIVE_BRIDGES_KEY]) globalThis[LIVE_BRIDGES_KEY] = new Map();
+  return globalThis[LIVE_BRIDGES_KEY];
+}
+
+async function stopBridgeQuietly(bridge, logger) {
+  if (!bridge || typeof bridge.stop !== 'function') return;
+  let timer = null;
+  try {
+    await Promise.race([
+      bridge.stop(),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, STALE_BRIDGE_STOP_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+  } catch (error) {
+    logger.warn?.('[wechat-personal] unable to stop a stale bridge:', error?.message ?? error);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function dshHomeOf(config = {}) {
   return resolve(config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
 }
@@ -160,6 +189,10 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
     catch (error) { logger.warn?.('[wechat-personal] brain dispose failed:', error?.message ?? error); }
     try { await current.client?.close?.(); }
     catch { /* 客户端没有常驻连接，close 失败不影响后续重连。 */ }
+    if (current.registryKey) {
+      const registry = liveBridges();
+      if (registry.get(current.registryKey) === current.bridge) registry.delete(current.registryKey);
+    }
   }
 
   async function startSession(settings) {
@@ -235,8 +268,21 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       logger: channelLogger(logger),
     });
     bridgeRef = bridge;
-    await bridge.start();
-    session = { client, bridge, brain, account, settings, ownUserId };
+    const registryKey = `${daemonUrl}\u0000${settings.accountId}`;
+    const registry = liveBridges();
+    const stale = registry.get(registryKey);
+    if (stale && stale !== bridge) {
+      logger.warn?.('[wechat-personal] stopping a stale bridge from an earlier reload');
+      await stopBridgeQuietly(stale, logger);
+    }
+    registry.set(registryKey, bridge);
+    session = { client, bridge, brain, account, settings, ownUserId, registryKey };
+    try {
+      await bridge.start();
+    } catch (error) {
+      await closeSession();
+      throw error;
+    }
     startedAt = new Date().toISOString();
     logger.info?.(`[wechat-personal] bridge online: ${settings.accountId} (${ownUserId})`);
     return session;
