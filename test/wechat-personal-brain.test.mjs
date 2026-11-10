@@ -632,3 +632,43 @@ test('a reply to the bot message opens the continuous conversation window', asyn
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('start preloads known groups so the status panel is not empty after a restart', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-'));
+  const client = fakeClient({
+    threads: [
+      {
+        id: GROUP_ID,
+        displayName: '👫',
+        kind: 'group',
+        avatarMembers: [
+          { id: 'wxid_a', displayName: 'Zach' },
+          { id: 'wxid_b', displayName: 'JYY' },
+          { id: OWN_ID, displayName: '大肥鱼版' },
+        ],
+      },
+      { id: 'wxid_a', displayName: 'Zach', kind: 'direct' },
+    ],
+  });
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain: fakeBrain(),
+    generate: async () => 'hi',
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    const status = await bridge.status();
+    assert.equal(status.groups.length, 1);
+    assert.equal(status.groups[0].chatId, GROUP_ID);
+    assert.equal(status.groups[0].name, '👫');
+    assert.equal(status.groups[0].memberCount, 3);
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});

@@ -205,6 +205,7 @@ export class WechatPersonalGroupBridge {
     this.#lastError = null;
     this.#startedAt = this.#now();
     this.#abortController = new AbortController();
+    await this.#preloadGroups();
     this.#loopPromise = this.#runLoop(this.#abortController.signal);
     this.#logger.info?.('[dsh-im:wechat-personal] event bridge started', this.#cursor ? `(after ${this.#cursor})` : '(from now)');
   }
@@ -252,6 +253,11 @@ export class WechatPersonalGroupBridge {
   }
 
   async status() {
+    // 面板里的「N 个群」来自桥接已知群缓存；刚启动时先按 daemon 的会话列表预热一次，
+    // 避免重启后在收到新消息之前一直显示 0 个群。
+    if (this.#running && this.#groups.size === 0) {
+      await this.#preloadGroups().catch(() => {});
+    }
     return {
       running: this.#running,
       accountId: this.#accountId,
@@ -269,6 +275,31 @@ export class WechatPersonalGroupBridge {
         .filter(([, queue]) => queue.jobs.length > 0)
         .map(([chatId, queue]) => ({ chatId, count: queue.jobs.length })),
     };
+  }
+
+  /** 从 daemon 的会话列表预热已知群，让状态面板在重启后立即显示群数量。 */
+  async #preloadGroups() {
+    if (typeof this.#client.listThreads !== 'function') return;
+    let threads;
+    try {
+      threads = await this.#client.listThreads({ limit: 50 });
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] unable to preload groups:', error?.message ?? error);
+      return;
+    }
+    const now = this.#now();
+    for (const thread of Array.isArray(threads) ? threads : []) {
+      const chatId = textOf(thread?.id);
+      if (!isGroupThreadId(chatId)) continue;
+      const avatarMembers = Array.isArray(thread.avatarMembers) ? thread.avatarMembers : [];
+      const previous = this.#groups.get(chatId) ?? {};
+      this.#groups.set(chatId, {
+        chatId,
+        name: textOf(thread.displayName) || previous.name || chatId,
+        memberCount: avatarMembers.length || previous.memberCount || 0,
+        lastSeenAt: previous.lastSeenAt ?? now,
+      });
+    }
   }
 
   async #runLoop(signal) {
