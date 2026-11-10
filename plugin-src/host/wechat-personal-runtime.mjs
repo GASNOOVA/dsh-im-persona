@@ -39,6 +39,19 @@ function dshHomeOf(config = {}) {
   return resolve(config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
 }
 
+// Host 被打包进 DSH 时，顶层 config 可能只有各渠道的键（例如 startup 测试的
+// { weixin, qq }），此时把渠道配置里的 dshHome 提上来，避免回退到真实
+// DSH_HOME 而意外读取用户已启用的微信个人号配置。
+function normalizeRuntimeConfig(config = {}, internals = {}) {
+  if (typeof internals.dshHome === 'string' && internals.dshHome) {
+    return { ...config, dshHome: internals.dshHome };
+  }
+  if (typeof config?.dshHome === 'string' && config.dshHome) return config;
+  const nested = [config?.weixin?.dshHome, config?.qq?.dshHome]
+    .find((value) => typeof value === 'string' && value.length > 0);
+  return nested ? { ...config, dshHome: nested } : config;
+}
+
 function tokenPathOf(config, settings) {
   if (typeof settings?.tokenPath === 'string' && settings.tokenPath.trim()) return resolve(settings.tokenPath.trim());
   return join(dshHomeOf(config), 'integrations', 'dsh-im', 'wechat-personal', 'api-token');
@@ -116,7 +129,8 @@ async function readToken(path) {
  * 创建微信个人号管理器（单例由 installWechatPersonalRuntime 持有）。
  * 所有外部依赖都可以通过 internals 注入，便于单元测试。
  */
-export function createWechatPersonalManager({ ctx = null, config = {}, internals = {} }) {
+export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}, internals = {} }) {
+  const config = normalizeRuntimeConfig(rawConfig, internals);
   const logger = internals.logger
     ?? (typeof ctx?.logger === 'function' ? ctx.logger('dsh-im:wechat-personal') : (ctx?.logger ?? console));
   const settingsStore = internals.settingsStore ?? getGroupBrainSettingsStore(config);
