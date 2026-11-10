@@ -9,9 +9,11 @@
 // 设计上不新增独立的 IM 渠道卡片：微信个人号只是群聊大脑的一种输入源，
 // 因此人设、上下文增强、白名单、记忆调度都复用已有的群聊大脑配置。
 
+import { spawn } from 'node:child_process';
+import { existsSync, openSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import {
   DEFAULT_GROUP_BRAIN_SETTINGS,
@@ -89,6 +91,136 @@ function tokenPathOf(config, settings) {
 
 function cursorPathOf(config, accountId) {
   return join(dshHomeOf(config), 'integrations', 'dsh-im', 'wechat-personal', `${accountId}-cursor.json`);
+}
+
+const DAEMON_START_TIMEOUT_MS = 30_000;
+const DAEMON_POLL_MS = 500;
+const DAEMON_ACCOUNT_TIMEOUT_MS = 30_000;
+const DAEMON_ACCOUNT_RECOVERY_TIMEOUT_MS = 5_000;
+
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function isLoopbackDaemonUrl(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '::1');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 从 tokenPath（<daemonDir>/aw-data/api-token）推导 agent-wechat 安装目录，
+ * 供 DSH 重启后自动拉起 daemon 使用。推导失败时返回 null（不自动启动）。
+ */
+export function resolveAgentWechatDaemonDir(settings = {}) {
+  const explicit = typeof settings?.daemonDir === 'string' ? settings.daemonDir.trim() : '';
+  if (explicit) return resolve(explicit);
+  const tokenPath = typeof settings?.tokenPath === 'string' ? settings.tokenPath.trim() : '';
+  if (!tokenPath) return null;
+  const tokenDir = dirname(resolve(tokenPath));
+  return basename(tokenDir) === 'aw-data' ? dirname(tokenDir) : null;
+}
+
+function spawnAgentWechatDaemon({ daemonDir, daemonUrl, logger = console }) {
+  const bin = join(daemonDir, 'node_modules', '.bin', 'wx');
+  const url = new URL(daemonUrl);
+  const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+  const listen = `${url.hostname}:${port}`;
+  let stdio = 'ignore';
+  try {
+    const logFd = openSync(join(daemonDir, 'daemon.log'), 'a');
+    stdio = ['ignore', logFd, logFd];
+  } catch {
+    stdio = 'ignore';
+  }
+  const child = spawn(bin, ['--data-dir', join(daemonDir, 'aw-data'), 'serve', '--listen', listen], {
+    cwd: daemonDir,
+    detached: true,
+    stdio,
+    env: {
+      ...process.env,
+      HOME: join(daemonDir, 'home'),
+      XDG_RUNTIME_DIR: join(daemonDir, 'run'),
+      XDG_CONFIG_HOME: join(daemonDir, 'home', '.config'),
+      XDG_DATA_HOME: join(daemonDir, 'home', '.local', 'share'),
+      XDG_CACHE_HOME: join(daemonDir, 'home', '.cache'),
+      TMPDIR: join(daemonDir, 'tmp'),
+    },
+  });
+  child.on?.('error', (error) => logger.warn?.(`[wechat-personal] unable to start agent-wechat daemon: ${error?.message ?? error}`));
+  child.unref?.();
+  logger.info?.(`[wechat-personal] started agent-wechat daemon from ${daemonDir} on ${listen}`);
+  return child;
+}
+
+/**
+ * 确保本地 agent-wechat daemon 可用：健康检查失败且配置指向本机时，
+ * 尝试以 detached 子进程启动它并等待健康检查通过（DSH 重启后的自愈）。
+ */
+export async function ensureAgentWechatDaemon({
+  settings = {},
+  client = null,
+  logger = console,
+  spawnDaemon = spawnAgentWechatDaemon,
+  pathExists = existsSync,
+  waitMs = DAEMON_START_TIMEOUT_MS,
+  pollMs = DAEMON_POLL_MS,
+  sleepImpl = sleep,
+} = {}) {
+  const healthOk = async () => {
+    try {
+      await client?.health?.();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (await healthOk()) return { ok: true, started: false };
+  if (!isLoopbackDaemonUrl(settings?.daemonUrl)) return { ok: false, started: false, reason: 'remote-daemon' };
+  const daemonDir = resolveAgentWechatDaemonDir(settings);
+  if (!daemonDir || !pathExists(join(daemonDir, 'node_modules', '.bin', 'wx'))) {
+    return { ok: false, started: false, reason: 'daemon-dir-unavailable' };
+  }
+  try {
+    spawnDaemon({ daemonDir, daemonUrl: settings.daemonUrl, logger });
+  } catch (error) {
+    return { ok: false, started: false, reason: 'daemon-start-failed', error: error?.message ?? String(error) };
+  }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await sleepImpl(pollMs);
+    if (await healthOk()) return { ok: true, started: true };
+  }
+  return { ok: false, started: true, reason: 'daemon-timeout' };
+}
+
+async function waitForDaemonAccount({
+  client,
+  accountId,
+  logger = console,
+  waitMs = DAEMON_ACCOUNT_TIMEOUT_MS,
+  pollMs = DAEMON_POLL_MS,
+  sleepImpl = sleep,
+} = {}) {
+  const deadline = Date.now() + waitMs;
+  let lastError = null;
+  while (true) {
+    try {
+      const account = await client.getAccount(accountId);
+      if (account?.authenticated) return account;
+      lastError = new Error('微信个人号尚未登录，请先在 agent-wechat 中扫码登录');
+    } catch (error) {
+      lastError = error;
+    }
+    if (Date.now() >= deadline) break;
+    logger.debug?.('[wechat-personal] waiting for the daemon account to recover…');
+    await sleepImpl(pollMs);
+  }
+  throw lastError ?? new Error('微信个人号账号不可用');
 }
 
 function channelLogger(logger, name = '[dsh-im:wechat-personal]') {
@@ -206,7 +338,29 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       accountId: settings.accountId,
       timeoutMs: CONNECT_TIMEOUT_MS,
     });
-    const account = await client.getAccount(settings.accountId);
+    const ensureDaemon = internals.ensureDaemon ?? ensureAgentWechatDaemon;
+    const ensured = await ensureDaemon({
+      settings: { ...settings, daemonUrl },
+      client,
+      logger: channelLogger(logger),
+      spawnDaemon: internals.spawnDaemon,
+      pathExists: internals.pathExists,
+      waitMs: internals.daemonStartWaitMs,
+      pollMs: internals.daemonStartPollMs,
+    });
+    if (!ensured.ok) {
+      logger.warn?.(`[wechat-personal] agent-wechat daemon not reachable (${ensured.reason ?? 'unknown'}); start it manually or set tokenPath inside the daemon directory`);
+    }
+    const waitAccount = internals.waitForAccount ?? waitForDaemonAccount;
+    const account = await waitAccount({
+      client,
+      accountId: settings.accountId,
+      logger: channelLogger(logger),
+      waitMs: ensured.started
+        ? (internals.daemonAccountWaitMs ?? DAEMON_ACCOUNT_TIMEOUT_MS)
+        : (internals.daemonAccountRecoveryWaitMs ?? DAEMON_ACCOUNT_RECOVERY_TIMEOUT_MS),
+      pollMs: internals.daemonStartPollMs,
+    });
     if (!account?.authenticated) throw new Error('微信个人号尚未登录，请先在 agent-wechat 中扫码登录');
     const ownUserId = typeof account.ownUsername === 'string' ? account.ownUsername : '';
     if (!ownUserId) throw new Error('微信个人号账号缺少 ownUsername');

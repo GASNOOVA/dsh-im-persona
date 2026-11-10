@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | **微信** | 使用微信扫码绑定机器人（iLink 长轮询） | 仅私聊；等待回答时显示「正在输入」，最终回复按 1,800 字符分段；支持图片/文件输入与结果文件回传；可用 `/plan`、`/goal` |
 | **QQ** | 手机 QQ 扫码创建机器人，或 AppID + AppSecret 手动绑定（WebSocket 长连接） | 私聊直接回复、群聊被 @ 后回复；显示「正在输入」，私聊以单条 Markdown 回复；支持图片/文件输入与结果文件回传、`/menu` 可点击菜单 |
-| **微信个人号（可选，群聊扩展）** | 本机运行 [agent-wechat](https://github.com/thisnick/agent-wechat) daemon，用小号扫码登录；需常驻进程 | 群聊被 @ 时回复、开启群聊大脑后可在小群主动接话；支持文本；图片识图暂缓（代码保留 TODO，文件/语音暂不支持）；非官方协议，有账号风控风险，建议专用小号 |
+| **微信个人号（可选，群聊扩展）** | 本机运行 [agent-wechat](https://github.com/thisnick/agent-wechat) daemon，用小号扫码登录；DSH 重启后插件会自动拉起本地 daemon（tokenPath 可推导安装目录时） | 群聊被 @ 时回复、开启群聊大脑后可在小群主动接话；支持文本；图片识图暂缓（代码保留 TODO，文件/语音暂不支持）；非官方协议，有账号风控风险，建议专用小号 |
 
 两个渠道都支持：每机器人工作区 / 模型 / 推理等级 / Agent Preset、上下文增强、访问模式、命令权限、主动投递、延迟交付、`/history`、批量输入等。
 
@@ -93,7 +93,7 @@ dsh plugin --profile web remove dsh-im-persona
    - **token 文件路径**：agent-wechat 数据目录下的 `api-token`（例如 `~/.local/share/agent-wechat/api-token`；本项目实测部署在 `/mnt/volume/dsh/.im/agent-wechat/aw-data/api-token`）；
    - **群聊人设**：默认「大肥鱼（群聊版）」；
    - 点击**测试 daemon 连接**确认登录态与可见会话。
-4. 保存后群聊大脑会连接 daemon 的事件流；把机器人拉进小群后 @ 它即可回复。若希望未 @ 也自动接话，在「自动接话白名单」加入该群（格式 `wechat-personal:xiaohao:群ID:群名`），或依赖小群人数上限（agent-wechat 能提供成员数，≤5 人自动生效）。
+4. 保存后群聊大脑会连接 daemon 的事件流；把机器人拉进小群后 @ 它即可回复。DSH 重启后插件会自动尝试拉起本地 daemon（前提：token 文件路径形如 `<daemon目录>/aw-data/api-token`）；若希望未 @ 也自动接话，在「自动接话白名单」加入该群（格式 `wechat-personal:xiaohao:群ID:群名`），或依赖小群人数上限（agent-wechat 能提供成员数，≤5 人自动生效）。
 
 ## 5. 人设（Persona）
 

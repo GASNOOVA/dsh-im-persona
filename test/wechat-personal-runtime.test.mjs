@@ -6,9 +6,11 @@ import test from 'node:test';
 
 import {
   createWechatPersonalManager,
+  ensureAgentWechatDaemon,
   getWechatPersonalManager,
   installWechatPersonalRuntime,
   listWechatPersonalPersonaChoices,
+  resolveAgentWechatDaemonDir,
   resolveWechatPersonalPersona,
 } from '../plugin-src/host/wechat-personal-runtime.mjs';
 
@@ -218,6 +220,130 @@ test('installWechatPersonalRuntime registers the active manager', async () => {
     });
     assert.equal(getWechatPersonalManager(), installed);
     await installed.close();
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+
+test('resolveAgentWechatDaemonDir derives the daemon directory from the token path', () => {
+  assert.equal(resolveAgentWechatDaemonDir({ tokenPath: '/opt/aw/aw-data/api-token' }), '/opt/aw');
+  assert.equal(resolveAgentWechatDaemonDir({ tokenPath: '/data/tokens/api-token' }), null);
+  assert.equal(resolveAgentWechatDaemonDir({ tokenPath: '' }), null);
+  assert.equal(resolveAgentWechatDaemonDir({}), null);
+});
+
+test('ensureAgentWechatDaemon starts a local daemon when health is down', async () => {
+  const spawned = [];
+  let healthCalls = 0;
+  const client = {
+    async health() {
+      healthCalls += 1;
+      if (healthCalls < 2) throw new Error('down');
+      return { status: 'ok' };
+    },
+  };
+  const daemonDir = '/opt/aw';
+  const result = await ensureAgentWechatDaemon({
+    settings: { daemonUrl: 'http://127.0.0.1:16175', tokenPath: '/opt/aw/aw-data/api-token' },
+    client,
+    logger: { info() {}, warn() {} },
+    pathExists: (path) => path === join(daemonDir, 'node_modules', '.bin', 'wx'),
+    spawnDaemon: (args) => spawned.push(args),
+    sleepImpl: async () => {},
+    waitMs: 100,
+    pollMs: 1,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.started, true);
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].daemonDir, daemonDir);
+  assert.equal(spawned[0].daemonUrl, 'http://127.0.0.1:16175');
+});
+
+test('ensureAgentWechatDaemon does not spawn a remote daemon', async () => {
+  let spawnCalls = 0;
+  const result = await ensureAgentWechatDaemon({
+    settings: { daemonUrl: 'http://192.168.1.9:16175', tokenPath: '/opt/aw/aw-data/api-token' },
+    client: { async health() { throw new Error('down'); } },
+    logger: { info() {}, warn() {} },
+    pathExists: () => true,
+    spawnDaemon: () => { spawnCalls += 1; },
+    sleepImpl: async () => {},
+    waitMs: 10,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.started, false);
+  assert.equal(result.reason, 'remote-daemon');
+  assert.equal(spawnCalls, 0);
+});
+
+test('ensureAgentWechatDaemon skips when the daemon directory cannot be derived', async () => {
+  const result = await ensureAgentWechatDaemon({
+    settings: { daemonUrl: 'http://127.0.0.1:16175', tokenPath: '/data/tokens/api-token' },
+    client: { async health() { throw new Error('down'); } },
+    logger: { info() {}, warn() {} },
+    pathExists: () => true,
+    spawnDaemon: () => {},
+    sleepImpl: async () => {},
+    waitMs: 10,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'daemon-dir-unavailable');
+});
+
+test('wechat personal manager auto-starts the daemon and waits for the account', async () => {
+  const { internals } = mocks();
+  const home = await makeHome();
+  const daemonDir = join(home, 'agent-wechat');
+  const tokenDir = join(daemonDir, 'aw-data');
+  await mkdir(tokenDir, { recursive: true });
+  const tokenPath = join(tokenDir, 'api-token');
+  await writeFile(tokenPath, 'secret-token\n', 'utf8');
+  const spawned = [];
+  const accountCalls = { count: 0 };
+  class DownThenUpClient {
+    constructor(options) { this.options = options; }
+    async health() {
+      if (!this.healthChecked) { this.healthChecked = true; throw new Error('daemon down'); }
+      return { status: 'ok' };
+    }
+    async getAccount() {
+      accountCalls.count += 1;
+      if (accountCalls.count === 1) throw new Error('account not ready');
+      return { authenticated: true, ownUsername: 'wxid_me', connection: 'online' };
+    }
+    async close() {}
+  }
+  try {
+    const manager = createWechatPersonalManager({
+      config: { dshHome: home },
+      internals: {
+        ...internals,
+        Client: DownThenUpClient,
+        settingsStore: fakeSettingsStore({
+          ...BASE_SETTINGS,
+          wechatPersonal: {
+            ...BASE_SETTINGS.wechatPersonal,
+            daemonUrl: 'http://127.0.0.1:16175',
+            tokenPath,
+          },
+        }),
+        generate: async () => '你好',
+        offPeakSettings: { get: async () => ({}), shouldBlockInbound: () => false },
+        pathExists: (path) => path === join(daemonDir, 'node_modules', '.bin', 'wx'),
+        spawnDaemon: (args) => spawned.push(args),
+        daemonStartPollMs: 1,
+        daemonAccountWaitMs: 2_000,
+      },
+    });
+    const result = await manager.reload();
+    assert.equal(result.ok, true);
+    assert.equal(result.running, true);
+    assert.equal(spawned.length, 1);
+    assert.equal(spawned[0].daemonDir, daemonDir);
+    assert.ok(accountCalls.count >= 2);
+    await manager.close();
   } finally {
     await rm(home, { recursive: true, force: true });
   }
