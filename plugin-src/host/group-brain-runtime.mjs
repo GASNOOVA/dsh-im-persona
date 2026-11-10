@@ -192,13 +192,19 @@ export function createHostGroupBrain({
   if (typeof channel !== 'string' || !channel) throw new TypeError('group brain channel is required');
   if (typeof botId !== 'string' || !botId) throw new TypeError('group brain botId is required');
   if (typeof send !== 'function') throw new TypeError('group brain send function is required');
+  const registry = dshHome ? getGroupBrainSessionRegistry({ dshHome, logger }) : null;
   const generate = createHarnessGroupBrainGenerator({
     harness,
     logger,
     channel,
     botId,
     dshHome,
+    registry,
   });
+  // 同一个群已有统一会话时，自动接话不再重复注入人设/记忆/画像（只补最近对话）。
+  const sessionExists = registry
+    ? async (chatId) => Boolean(await registry.get(groupBrainSessionKey(channel, botId, chatId)))
+    : null;
   const brain = new GroupBrain({
     channel,
     botId,
@@ -206,6 +212,7 @@ export function createHostGroupBrain({
     generate,
     send,
     resolvePersona,
+    sessionExists,
     logger,
     ...(timerFns ? { timerFns } : {}),
   });
