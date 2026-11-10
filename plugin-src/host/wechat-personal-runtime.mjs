@@ -11,7 +11,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, openSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -157,6 +157,82 @@ function spawnAgentWechatDaemon({ daemonDir, daemonUrl, logger = console }) {
   return child;
 }
 
+const DAEMON_PID_FILENAME = 'daemon.pid';
+
+async function readDaemonPidFile({ daemonDir } = {}) {
+  try {
+    const document = JSON.parse(await readFile(join(daemonDir, DAEMON_PID_FILENAME), 'utf8'));
+    const pid = Number(document?.pid);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return {
+      pid,
+      daemonUrl: typeof document.daemonUrl === 'string' ? document.daemonUrl : '',
+      startedAt: typeof document.startedAt === 'string' ? document.startedAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeDaemonPidFile({ daemonDir, pid, daemonUrl } = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  await mkdir(daemonDir, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(daemonDir, DAEMON_PID_FILENAME),
+    `${JSON.stringify({ pid, daemonUrl, startedAt: new Date().toISOString(), owner: 'dsh-im-persona' })}\n`,
+    { mode: 0o600 },
+  );
+}
+
+async function removeDaemonPidFile({ daemonDir, pid } = {}) {
+  try {
+    const current = await readDaemonPidFile({ daemonDir });
+    if (pid && current && current.pid !== pid) return;
+    await unlink(join(daemonDir, DAEMON_PID_FILENAME));
+  } catch {
+    // 文件不存在或已被清理都视为成功。
+  }
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function stopDaemonProcess({ pid, logger = console, waitMs = 5_000, pollMs = 200 } = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!isProcessAlive(pid)) return false;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return false;
+  }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await sleep(pollMs);
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+    logger.warn?.(`[wechat-personal] daemon pid ${pid} did not exit after SIGTERM; sent SIGKILL`);
+  } catch {
+    // 进程可能刚好退出。
+  }
+  return true;
+}
+
+function sameDaemonUrl(left, right) {
+  try {
+    return new URL(left).href.replace(/\/$/u, '') === new URL(right).href.replace(/\/$/u, '');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 确保本地 agent-wechat daemon 可用：健康检查失败且配置指向本机时，
  * 尝试以 detached 子进程启动它并等待健康检查通过（DSH 重启后的自愈）。
@@ -167,6 +243,9 @@ export async function ensureAgentWechatDaemon({
   logger = console,
   spawnDaemon = spawnAgentWechatDaemon,
   pathExists = existsSync,
+  readPid = readDaemonPidFile,
+  writePid = writeDaemonPidFile,
+  isAlive = isProcessAlive,
   waitMs = DAEMON_START_TIMEOUT_MS,
   pollMs = DAEMON_POLL_MS,
   sleepImpl = sleep,
@@ -179,21 +258,39 @@ export async function ensureAgentWechatDaemon({
       return false;
     }
   };
-  if (await healthOk()) return { ok: true, started: false };
-  if (!isLoopbackDaemonUrl(settings?.daemonUrl)) return { ok: false, started: false, reason: 'remote-daemon' };
   const daemonDir = resolveAgentWechatDaemonDir(settings);
+  if (await healthOk()) {
+    // 健康但可能仍是「上一次插件生命周期」遗留的 daemon：若 pid 文件与配置匹配，
+    // 就认领它，使插件关闭时能把它一起停掉（插件与 daemon 绑定生命周期）。
+    const recorded = await readPid({ daemonDir });
+    const owned = Boolean(recorded && recorded.pid && isAlive(recorded.pid)
+      && sameDaemonUrl(recorded.daemonUrl, settings?.daemonUrl));
+    return { ok: true, started: false, owned, pid: owned ? recorded.pid : null, daemonDir: daemonDir ?? null };
+  }
+  if (!isLoopbackDaemonUrl(settings?.daemonUrl)) return { ok: false, started: false, reason: 'remote-daemon' };
   if (!daemonDir || !pathExists(join(daemonDir, 'node_modules', '.bin', 'wx'))) {
     return { ok: false, started: false, reason: 'daemon-dir-unavailable' };
   }
+  let child = null;
   try {
-    spawnDaemon({ daemonDir, daemonUrl: settings.daemonUrl, logger });
+    child = spawnDaemon({ daemonDir, daemonUrl: settings.daemonUrl, logger });
   } catch (error) {
     return { ok: false, started: false, reason: 'daemon-start-failed', error: error?.message ?? String(error) };
+  }
+  const pid = Number(child?.pid);
+  if (Number.isInteger(pid) && pid > 0) {
+    try {
+      await writePid({ daemonDir, pid, daemonUrl: settings.daemonUrl });
+    } catch (error) {
+      logger.warn?.(`[wechat-personal] unable to record the daemon pid: ${error?.message ?? error}`);
+    }
   }
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     await sleepImpl(pollMs);
-    if (await healthOk()) return { ok: true, started: true };
+    if (await healthOk()) {
+      return { ok: true, started: true, owned: Number.isInteger(pid) && pid > 0, pid: Number.isInteger(pid) && pid > 0 ? pid : null, daemonDir: daemonDir ?? null };
+    }
   }
   return { ok: false, started: true, reason: 'daemon-timeout' };
 }
@@ -303,6 +400,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
   let session = null;
   let lastError = null;
   let startedAt = null;
+  let ownedDaemon = null;
   let queue = Promise.resolve();
 
   const serialize = (task) => {
@@ -310,6 +408,31 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
     queue = run.catch(() => {});
     return run;
   };
+
+  /**
+   * 停止由本插件拉起（或认领）的 agent-wechat daemon。
+   * 插件与 daemon 绑定生命周期：启动时按需拉起，禁用插件/热重载/宿主关闭时一起停止；
+   * 若 daemon 是用户手动启动的（没有 pid 文件），这里不会碰它。
+   */
+  async function stopOwnedDaemon(reason) {
+    const owned = ownedDaemon;
+    ownedDaemon = null;
+    if (!owned) return;
+    const stopDaemon = internals.stopDaemon ?? stopDaemonProcess;
+    const removePid = internals.removeDaemonPid ?? removeDaemonPidFile;
+    try {
+      await stopDaemon({ pid: owned.pid, logger });
+      logger.info?.(`[wechat-personal] stopped owned agent-wechat daemon (pid ${owned.pid}): ${reason}`);
+    } catch (error) {
+      logger.warn?.(`[wechat-personal] unable to stop the owned daemon: ${error?.message ?? error}`);
+    } finally {
+      try {
+        await removePid({ daemonDir: owned.daemonDir, pid: owned.pid });
+      } catch {
+        // pid 文件清理失败不影响后续启动。
+      }
+    }
+  }
 
   async function closeSession() {
     const current = session;
@@ -345,11 +468,17 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       logger: channelLogger(logger),
       spawnDaemon: internals.spawnDaemon,
       pathExists: internals.pathExists,
+      readPid: internals.readPid,
+      writePid: internals.writePid,
+      isAlive: internals.isAlive,
       waitMs: internals.daemonStartWaitMs,
       pollMs: internals.daemonStartPollMs,
     });
     if (!ensured.ok) {
       logger.warn?.(`[wechat-personal] agent-wechat daemon not reachable (${ensured.reason ?? 'unknown'}); start it manually or set tokenPath inside the daemon directory`);
+    } else if (ensured.owned && ensured.pid) {
+      ownedDaemon = { pid: ensured.pid, daemonDir: ensured.daemonDir, daemonUrl };
+      logger.info?.(`[wechat-personal] ${ensured.started ? 'started' : 'adopted'} agent-wechat daemon (pid ${ensured.pid})`);
     }
     const waitAccount = internals.waitForAccount ?? waitForDaemonAccount;
     const account = await waitAccount({
@@ -466,15 +595,18 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       } catch (error) {
         lastError = `读取群聊大脑设置失败：${error?.message ?? error}`;
         await closeSession();
+        await stopOwnedDaemon('settings-unavailable');
         return { ok: false, reason: 'settings-unavailable', error: lastError };
       }
       const personal = settings?.wechatPersonal;
       if (!personal?.enabled) {
         await closeSession();
+        await stopOwnedDaemon('disabled');
         return { ok: true, running: false, reason: 'disabled' };
       }
       if (!personal.accountId) {
         await closeSession();
+        await stopOwnedDaemon('incomplete');
         lastError = '未配置微信个人号账号 ID';
         return { ok: false, reason: 'incomplete', error: lastError };
       }
@@ -570,7 +702,10 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
   }
 
   async function close() {
-    return serialize(async () => { await closeSession(); });
+    return serialize(async () => {
+      await closeSession();
+      await stopOwnedDaemon('dispose');
+    });
   }
 
   return { reload, status, test, listPersonas, close, config };
