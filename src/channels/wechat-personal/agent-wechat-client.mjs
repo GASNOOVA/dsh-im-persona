@@ -163,6 +163,12 @@ export class AgentWechatClient {
     return Array.isArray(body?.items) ? body.items : [];
   }
 
+  /** 返回 daemon 当前事件游标，用于首次启动时跳过历史回放。 */
+  async latestEventCursor({ signal } = {}) {
+    const body = await this.#request('GET', `/v1/accounts/${encode(this.#accountId)}/threads?limit=1`, { signal });
+    return typeof body?.asOfEventCursor === 'string' && body.asOfEventCursor ? body.asOfEventCursor : null;
+  }
+
   async listMessages(threadId, { limit = 50, signal } = {}) {
     const body = await this.#request(
       'GET',

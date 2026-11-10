@@ -156,6 +156,18 @@ export class WechatPersonalGroupBridge {
   async start() {
     if (this.#running) return;
     await this.loadCursor();
+    // 首次启动（没有游标文件）时从 daemon 当前游标开始，避免回放历史群消息。
+    if (!this.#cursor) {
+      try {
+        const latest = await this.#client.latestEventCursor?.();
+        if (typeof latest === 'string' && latest) {
+          this.#cursor = latest;
+          await this.#saveCursor(latest);
+        }
+      } catch (error) {
+        this.#logger.warn?.('[dsh-im:wechat-personal] unable to resolve starting cursor:', error?.message ?? error);
+      }
+    }
     this.#running = true;
     this.#lastError = null;
     this.#startedAt = this.#now();

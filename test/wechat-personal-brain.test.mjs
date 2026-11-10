@@ -22,16 +22,20 @@ async function waitFor(predicate, message, timeoutMs = 2_000) {
   assert.fail(message);
 }
 
-function fakeClient({ messages = [], threads = [], members = [] } = {}) {
+function fakeClient({ messages = [], threads = [], members = [], latestCursor = '285' } = {}) {
   const sent = [];
+  const askedAfter = [];
   const client = {
+    askedAfter,
+    latestEventCursor: async () => latestCursor,
     sent,
     sendText: async (payload) => { sent.push(payload); return { id: `send-${sent.length}`, state: 'accepted' }; },
     listThreads: async () => threads,
     listMembers: async () => members,
     listMessages: async () => messages,
     getMessage: async (id) => messages.find((message) => message.id === id) ?? null,
-    async *streamEvents({ signal } = {}) {
+    async *streamEvents({ after, signal } = {}) {
+      askedAfter.push(after ?? null);
       for (const event of client.events) yield event;
       if (signal?.aborted) return;
       // 保持挂起，模拟真实 SSE；测试结束由 abort 信号唤醒。
@@ -188,6 +192,30 @@ test('sendAmbient sends text and records a bot message', async () => {
     assert.equal(brain.observed[0].kind, 'bot');
     assert.equal(await bridge.sendAmbient({ chatId: 'not-a-group', text: 'x' }), false);
   } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('first start begins at the daemon cursor instead of replaying history', async () => {
+  const client = fakeClient();
+  const brain = fakeBrain({ direct: false });
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain,
+    generate: async () => 'x',
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.askedAfter.length === 1, 'stream should be opened');
+    assert.equal(client.askedAfter[0], '285');
+    assert.equal(brain.observed.length, 0);
+  } finally {
+    await bridge.stop();
     await rm(home, { recursive: true, force: true });
   }
 });

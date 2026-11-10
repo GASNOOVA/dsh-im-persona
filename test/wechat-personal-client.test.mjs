@@ -53,6 +53,11 @@ test('client sends bearer auth and unwraps list items', async () => {
   assert.equal(members[0].displayName, 'Zach');
   const message = await client.getMessage('msg-1');
   assert.equal(message.body, '你好');
+  const cursorClient = clientWith((url) => {
+    if (url.endsWith('/threads?limit=1')) return jsonResponse({ items: [], asOfEventCursor: '285' });
+    return jsonResponse({});
+  }).client;
+  assert.equal(await cursorClient.latestEventCursor(), '285');
   for (const call of calls) {
     assert.equal(call.options.headers.Authorization, 'Bearer secret-token');
   }
