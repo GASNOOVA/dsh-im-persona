@@ -1,4 +1,5 @@
 import { BusyMessageDispatcher, canAutomaticallySteer } from '../shared/busy-message-dispatcher.mjs';
+import { OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS, offPeakSleepReplyText } from '../shared/off-peak.mjs';
 import { SESSION_NAV_HELP_LINES } from '../shared/command-catalog.mjs';
 import { createDeferredDeliveryCoordinator, deferredOutcomeText } from '../shared/deferred-delivery-coordinator.mjs';
 import {
@@ -347,6 +348,7 @@ export class WeixinHarnessBridge {
   #typingClosed = false;
   #typingRetryAt = 0;
   #typingTicketStale = false;
+  #sleepReplyAt = new Map();
 
   constructor({
     api,
@@ -394,6 +396,31 @@ export class WeixinHarnessBridge {
 
   get status() {
     return structuredClone(this.#status);
+  }
+
+  /**
+   * 闲时启用处于高峰静默期时，给聊天对象发一条固定回复（不调用模型/API 渠道
+   * 之外的 DeepSeek），同一会话 5 分钟内最多一次。
+   */
+  async replySleeping(message) {
+    const toUserId = nonEmptyString(message?.from_user_id);
+    if (!toUserId) return false;
+    const now = Date.now();
+    const last = this.#sleepReplyAt.get(toUserId) ?? 0;
+    if (now - last < OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS) return false;
+    this.#sleepReplyAt.set(toUserId, now);
+    try {
+      await this.#send(
+        toUserId,
+        offPeakSleepReplyText(),
+        nonEmptyString(message?.context_token) ?? undefined,
+        nonEmptyString(message?.run_id) ?? undefined,
+      );
+      return true;
+    } catch (error) {
+      this.#logger.warn?.('[dsh-weixin] failed to send the off-peak sleep reply:', error);
+      return false;
+    }
   }
 
   accept(message) {

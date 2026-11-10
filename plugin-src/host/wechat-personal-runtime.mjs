@@ -202,6 +202,10 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       return rawGenerate(request);
     };
     const resolvePersona = async () => resolveWechatPersonalPersona(config, settings.personaId);
+    // 闲时启用且处于 DeepSeek 高峰时，桥接层直接回固定提示，不进入模型。
+    const isSleeping = async () => {
+      try { return offPeakSettings.shouldBlockInbound?.(new Date()) === true; } catch { return false; }
+    };
     let bridgeRef = null;
     const brain = internals.brain ?? new Brain({
       channel: 'wechat-personal',
@@ -224,6 +228,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       generate,
       resolvePersona,
       sessionExists,
+      isSleeping,
       accountId: settings.accountId,
       ownUserId,
       statePath: cursorPathOf(config, settings.accountId),

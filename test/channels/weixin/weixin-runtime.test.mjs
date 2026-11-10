@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { WeixinStateStore } from '../../../src/channels/weixin/state-store.mjs';
 
 import { WeixinApiError } from '../../../src/channels/weixin/weixin-api.mjs';
+import { offPeakSleepReplyText } from '../../../src/channels/shared/off-peak.mjs';
 import {
   orderWeixinMessages,
   WeixinRuntime,
@@ -775,16 +776,17 @@ test('runtime retries a transient notifyStart failure before reporting the accou
   await runtime.stop();
 });
 
-test('runtime silently drops inbound messages during DeepSeek peak hours when off-peak mode is enabled', async () => {
+test('runtime sends a fixed sleep reply during DeepSeek peak hours while skipping the model', async () => {
   const stopped = deferred();
   const handled = [];
   let polls = 0;
   let savedBuf = null;
+  const sent = [];
   const runtime = new WeixinRuntime({
     api: {
       notifyStart: async () => {},
       notifyStop: async () => {},
-      sendText: async () => assert.fail('a skipped message must not be answered'),
+      sendText: async (payload) => { sent.push(payload); return { ret: 0 }; },
       getUpdates: async ({ signal }) => {
         polls += 1;
         if (polls === 1) {
@@ -830,7 +832,10 @@ test('runtime silently drops inbound messages during DeepSeek peak hours when of
   await runtime.start();
   await eventually(() => polls >= 2, 'monitor must keep polling while dropping messages');
   assert.deepEqual(handled, []);
-  assert.equal(savedBuf, 'peak-skip', 'the update cursor must advance past dropped messages');
+  assert.equal(savedBuf, 'peak-skip', 'the update cursor must advance past the message');
+  assert.equal(sent.length, 1, 'the dropped message must receive the fixed sleep reply');
+  assert.equal(sent[0].text, offPeakSleepReplyText());
+  assert.equal(sent[0].toUserId, 'owner');
   await runtime.stop();
   stopped.resolve({ ret: 0, msgs: [] });
 });

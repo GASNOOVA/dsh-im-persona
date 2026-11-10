@@ -8,6 +8,7 @@ import {
   WechatPersonalGroupBridge,
   formatTranscriptLine,
 } from '../src/channels/wechat-personal/wechat-personal-brain.mjs';
+import { offPeakSleepReplyText } from '../src/channels/shared/off-peak.mjs';
 
 const GROUP_ID = '19129875381@chatroom';
 const OWN_ID = 'wxid_me';
@@ -129,6 +130,51 @@ test('an @ message becomes a direct reply with mentions', async () => {
     assert.equal(brain.observed[0].mentionedBot, true);
     assert.equal(brain.observed[1].kind, 'bot');
     assert.equal(brain.observed[1].text, '收到，我来啦。');
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a sleeping bridge replies with the fixed message instead of calling the model', async () => {
+  const messages = [{
+    id: 'msg-sleep',
+    threadId: GROUP_ID,
+    direction: 'incoming',
+    senderId: SENDER_ID,
+    body: '大肥鱼 在吗',
+    createdAt: '2026-11-10T05:18:27+00:00',
+    mentions: { self: true, userIds: [OWN_ID] },
+  }];
+  const client = fakeClient({
+    messages,
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [{ id: SENDER_ID, displayName: 'Zach' }] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }, { id: OWN_ID, displayName: '大肥鱼版' }],
+  });
+  client.events = [{ cursor: '11', kind: 'message.committed', payload: { messageId: 'msg-sleep', direction: 'incoming' } }];
+  const brain = fakeBrain({ direct: true });
+  const prompts = [];
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain,
+    generate: async (request) => { prompts.push(request.prompt); return '不应该调用模型。'; },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    isSleeping: async () => true,
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 1, 'the fixed sleep reply should be sent');
+    assert.deepEqual(prompts, [], '高峰期不能调用模型');
+    assert.equal(client.sent[0].text, offPeakSleepReplyText());
+    assert.deepEqual(client.sent[0].mentions, { userIds: [SENDER_ID] });
+    await waitFor(() => brain.observed.length === 2, 'the fixed reply should be recorded as a bot message');
+    assert.equal(brain.observed[1].kind, 'bot');
+    assert.equal(brain.observed[1].text, offPeakSleepReplyText());
   } finally {
     await bridge.stop();
     await rm(home, { recursive: true, force: true });

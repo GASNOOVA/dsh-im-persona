@@ -11,6 +11,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { AMBIENT_REPLY_MAX_CHARS, SKIP_TOKEN } from '../shared/group-brain/group-context.mjs';
+import { OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS, offPeakSleepReplyText } from '../shared/off-peak.mjs';
 
 /** 单条回复的硬上限：微信文本消息远大于此，但刷屏保护仍然有价值。 */
 export const WECHAT_PERSONAL_MAX_REPLY_CHARS = 4_000;
@@ -73,6 +74,8 @@ export class WechatPersonalGroupBridge {
   #generate;
   #resolvePersona;
   #sessionExists = null;
+  #isSleeping = null;
+  #sleepReplyAt = new Map();
   #accountId;
   #ownUserId;
   #statePath;
@@ -94,6 +97,7 @@ export class WechatPersonalGroupBridge {
     generate,
     resolvePersona = null,
     sessionExists = null,
+    isSleeping = null,
     accountId,
     ownUserId,
     statePath,
@@ -111,6 +115,7 @@ export class WechatPersonalGroupBridge {
     this.#generate = generate;
     this.#resolvePersona = typeof resolvePersona === 'function' ? resolvePersona : null;
     this.#sessionExists = typeof sessionExists === 'function' ? sessionExists : null;
+    this.#isSleeping = typeof isSleeping === 'function' ? isSleeping : null;
     this.#accountId = accountId;
     this.#ownUserId = ownUserId;
     this.#statePath = textOf(statePath) || join(process.cwd(), 'wechat-personal-cursor.json');
@@ -306,12 +311,40 @@ export class WechatPersonalGroupBridge {
       return;
     }
     this.#groups.set(chatId, { ...(this.#groups.get(chatId) ?? {}), chatId, name: group.name, memberCount: group.memberCount, lastSeenAt: event.at });
+    if (await this.#isSleepingNow()) {
+      if (observed?.direct) await this.#sendSleepReply({ event, group });
+      return;
+    }
     if (observed?.direct) {
       await this.#replyDirect({ event, observed, message });
       return;
     }
     if (observed?.followUp) {
       await this.#replyFollowUp({ event, message });
+    }
+  }
+
+  async #isSleepingNow() {
+    if (!this.#isSleeping) return false;
+    try { return (await this.#isSleeping()) === true; } catch { return false; }
+  }
+
+  /** 闲时高峰期内被 @ 时回一条固定提示，不调用模型；同一群 5 分钟最多一次。 */
+  async #sendSleepReply({ event }) {
+    const now = this.#now();
+    const last = this.#sleepReplyAt.get(event.chatId) ?? 0;
+    if (now - last < OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS) return;
+    this.#sleepReplyAt.set(event.chatId, now);
+    try {
+      const text = offPeakSleepReplyText();
+      await this.#client.sendText({
+        threadId: event.chatId,
+        text,
+        mentions: { userIds: [event.senderId] },
+      });
+      await this.#recordBotMessage({ chatId: event.chatId, text, groupName: event.groupName });
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] off-peak sleep reply failed:', error?.message ?? error);
     }
   }
 

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   BUILTIN_OFF_PEAK_HOLIDAYS,
@@ -17,15 +17,25 @@ import { OffPeakSettingsStore } from '../src/channels/shared/off-peak-settings-s
 import { createOffPeakRpcHandler, OFF_PEAK_ENDPOINTS } from '../plugin-src/host/off-peak-rpc.mjs';
 
 const at = (iso) => new Date(iso);
-const RPC = { get: OFF_PEAK_ENDPOINTS.get, set: OFF_PEAK_ENDPOINTS.set };
+const RPC = {
+  get: OFF_PEAK_ENDPOINTS.get,
+  set: OFF_PEAK_ENDPOINTS.set,
+  syncHolidays: OFF_PEAK_ENDPOINTS.syncHolidays,
+};
 const SCHEDULE = {
   timezone: 'Asia/Shanghai (UTC+8)',
   peakWindows: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }],
   weekdays: '周一至周五',
   weekendOffPeak: true,
   holidaysOffPeak: true,
+  builtinHolidayYears: [2026, 2027],
   holidayDates: [...BUILTIN_OFF_PEAK_HOLIDAYS],
-  extraHolidays: [],
+  syncedHolidays: [],
+  syncedAt: null,
+};
+const statusWith = (enabled, now, overrides = {}) => {
+  const status = offPeakStatus({ enabled, ...overrides }, now);
+  return status;
 };
 
 test('DeepSeek peak hours are 09:00–12:00 and 14:00–18:00 Beijing time on weekdays', () => {
@@ -63,17 +73,31 @@ test('weekends and Chinese statutory holidays are off-peak all day', () => {
   assert.equal(isPeakAt(at('2027-02-14T02:00:00.000Z')), false);
 });
 
-test('off-peak settings normalize strictly and support extra holidays', () => {
-  assert.deepEqual(normalizeOffPeakSettings({ enabled: true }), { enabled: true, extraHolidays: [] });
+test('off-peak settings normalize strictly and support synced holidays', () => {
+  assert.deepEqual(normalizeOffPeakSettings({ enabled: true }), {
+    enabled: true,
+    syncedHolidays: [],
+    syncedAt: null,
+  });
   assert.deepEqual(
-    normalizeOffPeakSettings({ enabled: true, extraHolidays: ['2027-12-31', '2027-12-31'] }),
-    { enabled: true, extraHolidays: ['2027-12-31'] },
+    normalizeOffPeakSettings({
+      enabled: true,
+      syncedHolidays: ['2028-01-01', '2027-12-31', '2027-12-31'],
+      syncedAt: '2026-11-10T07:00:00.000Z',
+    }),
+    {
+      enabled: true,
+      syncedHolidays: ['2027-12-31', '2028-01-01'],
+      syncedAt: '2026-11-10T07:00:00.000Z',
+    },
   );
   for (const value of [
     null, undefined, {}, { enabled: 'yes' }, { enabled: 1 }, [], 'enabled',
-    { enabled: true, extraHolidays: '2027-12-31' },
-    { enabled: true, extraHolidays: ['2027-13-01'] },
-    { enabled: true, extraHolidays: ['not-a-date'] },
+    { enabled: true, syncedHolidays: '2027-12-31' },
+    { enabled: true, syncedHolidays: ['2027-13-01'] },
+    { enabled: true, syncedHolidays: ['not-a-date'] },
+    { enabled: true, syncedAt: 'not-a-date' },
+    { enabled: true, syncedAt: 123 },
   ]) {
     assert.equal(normalizeOffPeakSettings(value), null);
   }
@@ -85,7 +109,7 @@ test('off-peak settings normalize strictly and support extra holidays', () => {
   });
 });
 
-test('shouldBlockInbound only drops messages while enabled and during peak hours', () => {
+test('shouldBlockInbound drops messages only while enabled and during peak hours', () => {
   const peak = at('2026-11-10T02:00:00.000Z'); // Tuesday 10:00 Beijing
   const offPeak = at('2026-11-10T10:00:00.000Z'); // Tuesday 18:00 Beijing
   assert.equal(shouldBlockInbound({ enabled: false }, peak), false);
@@ -93,7 +117,7 @@ test('shouldBlockInbound only drops messages while enabled and during peak hours
   assert.equal(shouldBlockInbound({ enabled: true }, peak), true);
   assert.equal(shouldBlockInbound({ enabled: true }, offPeak), false);
   assert.equal(shouldBlockInbound({ enabled: 'yes' }, peak), false);
-  assert.equal(shouldBlockInbound({ enabled: true, extraHolidays: ['2026-11-10'] }, peak), false);
+  assert.equal(shouldBlockInbound({ enabled: true, syncedHolidays: ['2026-11-10'] }, peak), false);
 });
 
 test('off-peak store persists a versioned document and keeps fail-open defaults', async (t) => {
@@ -102,16 +126,19 @@ test('off-peak store persists a versioned document and keeps fail-open defaults'
   const path = join(dshHome, 'integrations', 'dsh-im', 'off-peak-settings.json');
   const store = new OffPeakSettingsStore(path);
 
-  assert.deepEqual(await store.get(), { enabled: false, extraHolidays: [] });
+  assert.deepEqual(await store.get(), { enabled: false, syncedHolidays: [], syncedAt: null });
   assert.equal(store.shouldBlockInbound(at('2026-11-10T02:00:00.000Z')), false);
   await store.set({ enabled: true });
   const document = JSON.parse(await readFile(path, 'utf8'));
-  assert.deepEqual(document, { version: 1, offPeak: { enabled: true, extraHolidays: [] } });
+  assert.deepEqual(document, {
+    version: 2,
+    offPeak: { enabled: true, syncedHolidays: [], syncedAt: null },
+  });
   assert.equal(store.shouldBlockInbound(at('2026-11-10T02:00:00.000Z')), true);
   assert.equal(store.shouldBlockInbound(at('2026-11-10T10:00:00.000Z')), false);
 
   const reloaded = new OffPeakSettingsStore(path);
-  assert.deepEqual(await reloaded.get(), { enabled: true, extraHolidays: [] });
+  assert.deepEqual(await reloaded.get(), { enabled: true, syncedHolidays: [], syncedAt: null });
 
   await assert.rejects(store.set({ enabled: 'yes' }), TypeError);
 
@@ -120,18 +147,49 @@ test('off-peak store persists a versioned document and keeps fail-open defaults'
   await assert.rejects(broken.get(), SyntaxError);
   assert.equal(broken.shouldBlockInbound(at('2026-11-10T02:00:00.000Z')), false);
   // Saving repairs a corrupt document instead of leaving the settings page stuck.
-  assert.deepEqual(await broken.set({ enabled: true }), { enabled: true, extraHolidays: [] });
-  assert.deepEqual(await broken.get(), { enabled: true, extraHolidays: [] });
+  assert.deepEqual(await broken.set({ enabled: true }), {
+    enabled: true,
+    syncedHolidays: [],
+    syncedAt: null,
+  });
+  assert.deepEqual(await broken.get(), { enabled: true, syncedHolidays: [], syncedAt: null });
 });
 
-test('off-peak RPC reports status, validates payloads, and preserves extra holidays', async () => {
-  const settings = { enabled: false, extraHolidays: ['2027-12-31'] };
+test('off-peak store migrates a v1 document that held extraHolidays', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'dsh-offpeak-migrate-'));
+  t.after(() => rm(dshHome, { recursive: true, force: true }));
+  const path = join(dshHome, 'integrations', 'dsh-im', 'off-peak-settings.json');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify({
+    version: 1,
+    offPeak: { enabled: true, extraHolidays: ['2028-01-01', '2028-02-02'] },
+  }, null, 2), 'utf8');
+  const store = new OffPeakSettingsStore(path);
+  assert.deepEqual(await store.get(), {
+    enabled: true,
+    syncedHolidays: ['2028-01-01', '2028-02-02'],
+    syncedAt: null,
+  });
+  await store.set({ enabled: true, syncedHolidays: ['2028-01-01'], syncedAt: '2026-11-10T07:00:00.000Z' });
+  const document = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(document.version, 2);
+  assert.deepEqual(document.offPeak.syncedHolidays, ['2028-01-01']);
+});
+
+test('off-peak RPC reports status, validates payloads, and preserves synced holidays', async () => {
+  const settings = {
+    enabled: false,
+    syncedHolidays: ['2027-12-31'],
+    syncedAt: '2026-11-10T07:00:00.000Z',
+  };
   const store = {
-    async get() { return { ...settings, extraHolidays: [...settings.extraHolidays] }; },
+    async get() {
+      return { ...settings, syncedHolidays: [...settings.syncedHolidays] };
+    },
     async set(value) {
       Object.assign(settings, value);
-      settings.extraHolidays = [...value.extraHolidays];
-      return { ...settings, extraHolidays: [...settings.extraHolidays] };
+      settings.syncedHolidays = [...value.syncedHolidays];
+      return { ...settings, syncedHolidays: [...settings.syncedHolidays] };
     },
     shouldBlockInbound() { return false; },
   };
@@ -143,15 +201,18 @@ test('off-peak RPC reports status, validates payloads, and preserves extra holid
     enabled: false,
     offPeakNow: false,
     activeNow: true,
-    schedule: { ...SCHEDULE, holidayDates: [...BUILTIN_OFF_PEAK_HOLIDAYS, '2027-12-31'], extraHolidays: ['2027-12-31'] },
+    schedule: {
+      ...SCHEDULE,
+      holidayDates: [...BUILTIN_OFF_PEAK_HOLIDAYS, '2027-12-31'].sort(),
+      syncedHolidays: ['2027-12-31'],
+      syncedAt: '2026-11-10T07:00:00.000Z',
+    },
   });
   const saved = await handler(RPC.set, { enabled: true });
   assert.equal(saved.ok, true);
   assert.equal(saved.value.enabled, true);
   assert.equal(saved.value.activeNow, false);
-  assert.deepEqual(saved.value.schedule.extraHolidays, ['2027-12-31']);
-  const added = await handler(RPC.set, { enabled: true, extraHolidays: ['2028-01-01'] });
-  assert.deepEqual(added.value.schedule.extraHolidays, ['2028-01-01']);
+  assert.deepEqual(saved.value.schedule.syncedHolidays, ['2027-12-31']);
   assert.equal((await handler(RPC.set, { enabled: 'yes' })).error.code, 'bad-request');
   assert.equal((await handler(RPC.set, { enabled: true, extraHolidays: ['bad'] })).error.code, 'bad-request');
   assert.equal((await handler(RPC.get, { extra: true })).error.code, 'bad-request');
@@ -165,4 +226,64 @@ test('off-peak RPC reports status, validates payloads, and preserves extra holid
     async set() { throw new Error('disk'); },
   });
   assert.equal((await failing(RPC.get, {})).error.code, 'off-peak-settings-unavailable');
+});
+
+test('off-peak RPC syncs holidays through the injected loader and keeps the switch state', async () => {
+  const settings = { enabled: true, syncedHolidays: [], syncedAt: null };
+  const store = {
+    async get() { return { ...settings, syncedHolidays: [...settings.syncedHolidays] }; },
+    async set(value) {
+      Object.assign(settings, value);
+      settings.syncedHolidays = [...value.syncedHolidays];
+      return { ...settings, syncedHolidays: [...settings.syncedHolidays] };
+    },
+    shouldBlockInbound() { return false; },
+  };
+  let syncCalls = 0;
+  const syncHolidays = async () => {
+    syncCalls += 1;
+    return {
+      holidays: ['2028-01-01', '2028-01-02'],
+      years: [2028],
+      failedYears: [2029],
+      fetchedAt: '2026-11-10T08:00:00.000Z',
+      source: 'test',
+    };
+  };
+  const handler = createOffPeakRpcHandler(store, {
+    now: () => at('2026-11-10T10:00:00.000Z'),
+    syncHolidays,
+  });
+
+  const result = await handler(RPC.syncHolidays, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.value.enabled, true);
+  assert.deepEqual(result.value.schedule.syncedHolidays, ['2028-01-01', '2028-01-02']);
+  assert.equal(result.value.schedule.syncedAt, '2026-11-10T08:00:00.000Z');
+  assert.deepEqual(result.value.synced, {
+    years: [2028],
+    failedYears: [2029],
+    fetchedAt: '2026-11-10T08:00:00.000Z',
+    source: 'test',
+  });
+  assert.equal(syncCalls, 1);
+  assert.equal((await handler(RPC.syncHolidays, { enabled: true })).error.code, 'bad-request');
+
+  const failing = createOffPeakRpcHandler(store, {
+    now: () => at('2026-11-10T10:00:00.000Z'),
+    syncHolidays: async () => { throw new Error('network'); },
+  });
+  const failure = await failing(RPC.syncHolidays, {});
+  assert.equal(failure.ok, false);
+  assert.equal(failure.error.code, 'holiday-sync-failed');
+  assert.deepEqual(settings.syncedHolidays, ['2028-01-01', '2028-01-02']);
+});
+
+test('embedded holiday table covers all 2026/2027 statutory holiday dates', () => {
+  const count2026 = BUILTIN_OFF_PEAK_HOLIDAYS.filter((date) => date.startsWith('2026-')).length;
+  const count2027 = BUILTIN_OFF_PEAK_HOLIDAYS.filter((date) => date.startsWith('2027-')).length;
+  assert.equal(count2026, 33);
+  assert.equal(count2027, 29);
+  assert.equal(new Set(BUILTIN_OFF_PEAK_HOLIDAYS).size, BUILTIN_OFF_PEAK_HOLIDAYS.length);
+  assert.equal(statusWith(true, at('2026-11-10T02:00:00.000Z')).offPeakNow, false);
 });

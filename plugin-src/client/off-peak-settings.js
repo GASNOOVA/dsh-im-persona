@@ -3,10 +3,10 @@ import { h, localizeTemplate } from './i18n.js';
 
 export const OFF_PEAK_RPC_CHANNEL = '/dsh-im-settings';
 export const OFF_PEAK_ENDPOINTS = Object.freeze({
-  get: 'settings.off-peak.get', set: 'settings.off-peak.set',
+  get: 'settings.off-peak.get',
+  set: 'settings.off-peak.set',
+  syncHolidays: 'settings.off-peak.sync-holidays',
 });
-
-const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function statusResult(result) {
   if (result?.ok === false) {
@@ -26,7 +26,7 @@ function detailText(value) {
   if (!value.enabled) return '已关闭，机器人始终响应消息。';
   return value.offPeakNow
     ? '已开启，当前为空闲时段（半价），机器人正常响应。'
-    : '已开启，当前为高峰时段，入站消息将被静默丢弃，以节省 API 费用。';
+    : '已开启，当前为高峰时段，不调用模型，仅自动回复固定提示以节省 API 费用。';
 }
 
 function peakWindowsText(value) {
@@ -41,20 +41,23 @@ function peakWindowsText(value) {
   });
 }
 
-function parseHolidayText(text) {
-  const items = String(text ?? '')
-    .split(/[\s,，;；]+/u)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const dates = [];
-  const seen = new Set();
-  for (const item of items) {
-    if (!DATE_KEY_PATTERN.test(item)) return null;
-    if (seen.has(item)) continue;
-    seen.add(item);
-    dates.push(item);
+function holidayTableText(value) {
+  const schedule = value?.schedule ?? {};
+  const years = Array.isArray(schedule.builtinHolidayYears)
+    ? schedule.builtinHolidayYears.join('、')
+    : '2026、2027';
+  const syncedAt = schedule.syncedAt;
+  if (typeof syncedAt === 'string' && syncedAt) {
+    const time = new Date(syncedAt);
+    const label = Number.isNaN(time.getTime()) ? syncedAt : time.toLocaleString();
+    return localizeTemplate('已同步 {count} 个节假日（最近同步：{time}）', {
+      count: Array.isArray(schedule.syncedHolidays) ? schedule.syncedHolidays.length : 0,
+      time: label,
+    });
   }
-  return dates.sort();
+  return localizeTemplate('尚未同步节假日；当前使用内置 {years} 年节假日表。', {
+    years,
+  });
 }
 
 /**
@@ -66,18 +69,16 @@ export function OffPeakSettings({ rpcCall }) {
   const [phase, setPhase] = React.useState('loading');
   const [error, setError] = React.useState(null);
   const [saved, setSaved] = React.useState(false);
-  const [holidaysText, setHolidaysText] = React.useState('');
-  const [holidayError, setHolidayError] = React.useState(null);
+  const [syncing, setSyncing] = React.useState(false);
+  const [syncNotice, setSyncNotice] = React.useState(null);
   const mounted = React.useRef(false);
   const busy = React.useRef(false);
   const failedValue = React.useRef(null);
   const id = React.useId();
-  const disabled = phase === 'loading' || phase === 'saving';
+  const disabled = phase === 'loading' || phase === 'saving' || syncing;
 
   const applyValue = React.useCallback((next) => {
     setValue(next);
-    setHolidaysText((next?.schedule?.extraHolidays ?? []).join('\n'));
-    setHolidayError(null);
   }, []);
 
   const load = React.useCallback(async (signal) => {
@@ -122,14 +123,21 @@ export function OffPeakSettings({ rpcCall }) {
     void submit({ enabled }, previous);
   };
 
-  const saveHolidays = () => {
-    const dates = parseHolidayText(holidaysText);
-    if (dates === null) {
-      setHolidayError('额外节假日格式不正确，请按 YYYY-MM-DD 每行一个填写。');
-      return;
+  const syncHolidays = async () => {
+    if (syncing || phase === 'loading' || phase === 'saving') return;
+    setSyncing(true);
+    setSyncNotice(null);
+    try {
+      const next = statusResult(await rpcCall(OFF_PEAK_ENDPOINTS.syncHolidays, {}));
+      if (!mounted.current) return;
+      applyValue(next);
+      setSyncNotice({ tone: 'success', text: holidayTableText(next) });
+    } catch (caught) {
+      if (!mounted.current) return;
+      setSyncNotice({ tone: 'error', text: caught.message });
+    } finally {
+      if (mounted.current) setSyncing(false);
     }
-    setHolidayError(null);
-    void submit({ enabled: value?.enabled === true, extraHolidays: dates }, value);
   };
 
   return h('section', {
@@ -146,7 +154,7 @@ export function OffPeakSettings({ rpcCall }) {
             : phase === 'saving' ? '保存中…'
               : saved ? '已保存' : '')),
       h('p', { className: 'dim-botGeneralHelp', id: `${id}-help` },
-        '开启后仅在 DeepSeek API 空闲时段响应消息；高峰时段静默丢弃入站消息，不调用 API，以节省费用。'),
+        '开启后仅在 DeepSeek API 空闲时段响应消息；高峰时段不调用模型，只自动回复一条固定提示，以节省费用。'),
       value ? h('p', { className: 'dim-botGeneralHelp', 'data-tone': value.enabled && !value.offPeakNow ? 'warning' : undefined },
         detailText(value)) : null,
       h('p', { className: 'dim-botGeneralHelp' }, peakWindowsText(value)),
@@ -166,27 +174,22 @@ export function OffPeakSettings({ rpcCall }) {
           onChange: (event) => saveToggle(event.target.checked),
         })))),
   h('div', { className: 'dim-offPeakHolidays' },
-    h('label', { className: 'dim-botGeneralTitle', htmlFor: `${id}-holidays` },
-      '额外节假日（每行一个 YYYY-MM-DD，可选）'),
+    h('div', { className: 'dim-sidebarHeading' },
+      h('span', { className: 'dim-botGeneralTitle' }, '法定节假日表'),
+      h('button', {
+        type: 'button',
+        className: 'dim-deliveryButton',
+        disabled,
+        onClick: () => { void syncHolidays(); },
+      }, syncing ? '同步中…' : '同步节假日')),
     h('p', { className: 'dim-botGeneralHelp' },
-      '内置 2026、2027 年中国法定节假日；后续年份或临时假期可在这里补充，节假日全天空闲。'),
-    h('textarea', {
-      id: `${id}-holidays`,
-      className: 'dim-offPeakHolidaysInput',
-      rows: 4,
-      value: holidaysText,
-      disabled,
-      placeholder: '2028-01-01',
-      onChange: (event) => { setHolidaysText(event.target.value); setHolidayError(null); },
-    }),
-    holidayError ? h('p', { role: 'alert', className: 'dim-accessFeedback', 'data-tone': 'error' },
-      holidayError) : null,
-    h('button', {
-      type: 'button',
-      className: 'dim-deliveryButton',
-      disabled: disabled,
-      onClick: saveHolidays,
-    }, '保存节假日')),
+      '内置 2026、2027 年中国法定节假日；点击按钮从 holiday-cn 手动同步最新国务院节假日安排（需要联网）。'),
+    value ? h('p', { className: 'dim-botGeneralHelp' }, holidayTableText(value)) : null,
+    syncNotice ? h('p', {
+      role: syncNotice.tone === 'error' ? 'alert' : 'status',
+      className: 'dim-accessFeedback',
+      'data-tone': syncNotice.tone === 'error' ? 'error' : undefined,
+    }, syncNotice.text) : null),
   error ? h('div', { className: 'dim-sidebarFeedback' },
     h('p', { role: 'alert', className: 'dim-accessFeedback', 'data-tone': 'error' }, error),
     h('button', {
@@ -195,11 +198,7 @@ export function OffPeakSettings({ rpcCall }) {
       onClick: () => {
         const failed = failedValue.current;
         if (!failed) { load(); return; }
-        if (failed.payload && Object.prototype.hasOwnProperty.call(failed.payload, 'extraHolidays')) {
-          void submit(failed.payload, failed.previous);
-        } else {
-          saveToggle(failed.payload?.enabled === true);
-        }
+        saveToggle(failed.payload?.enabled === true);
       },
     }, '重试')) : null);
 }

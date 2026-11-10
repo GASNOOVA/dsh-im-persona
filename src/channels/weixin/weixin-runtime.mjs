@@ -299,12 +299,15 @@ export class WeixinRuntime {
         const blockedByOffPeak = this.#shouldBlockInbound();
         const pendingMessages = orderWeixinMessages(response?.msgs);
         if (blockedByOffPeak) {
-          // 静默丢弃：消息不会进入 Harness，也不会产生任何回复或会话记录。
+          // 消息不会进入 Harness，也不产生会话记录；只回一条固定提示（有节流）。
           if (pendingMessages.length > 0) {
             this.#logger.info?.(
               `[dsh-weixin] account ${this.#config.botId} off-peak mode: skipped `
               + `${pendingMessages.length} inbound message(s) during DeepSeek peak hours`,
             );
+            for (const message of pendingMessages) {
+              void this.#bridge?.replySleeping?.(message).catch(() => {});
+            }
           }
         } else {
           for (const message of pendingMessages) {

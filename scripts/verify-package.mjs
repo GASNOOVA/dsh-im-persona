@@ -169,7 +169,7 @@ for (const marker of [
     throw new Error(`group brain RPC endpoint missing from Host or Client bundle: ${marker}`);
   }
 }
-for (const marker of ['settings.off-peak.get', 'settings.off-peak.set']) {
+for (const marker of ['settings.off-peak.get', 'settings.off-peak.set', 'settings.off-peak.sync-holidays']) {
   if (!host.includes(marker) || !client.includes(marker)) {
     throw new Error(`off-peak RPC endpoint missing from Host or Client bundle: ${marker}`);
   }

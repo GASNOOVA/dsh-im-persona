@@ -280,10 +280,18 @@ export class QqRuntime {
     };
     const onMessage = (_ctx, message) => {
       if (this.#shouldBlockInbound()) {
-        this.#logger.info?.(
-          `[dsh-im:qq] bot ${this.#config.botId} off-peak mode: skipped an inbound message `
-          + 'during DeepSeek peak hours',
-        );
+        if (isQqMessageAddressed(message)) {
+          // 被 @ 或私聊时回一条固定提示，不进入 Harness、不调用模型。
+          this.#logger.info?.(
+            `[dsh-im:qq] bot ${this.#config.botId} off-peak mode: sent a fixed sleeping reply`,
+          );
+          void this.#bridge?.replySleeping?.(message).catch(() => {});
+        } else {
+          this.#logger.info?.(
+            `[dsh-im:qq] bot ${this.#config.botId} off-peak mode: skipped an inbound message `
+            + 'during DeepSeek peak hours',
+          );
+        }
         return;
       }
       const task = this.#bridge?.accept(message);

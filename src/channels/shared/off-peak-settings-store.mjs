@@ -5,7 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 
 import { DEFAULT_OFF_PEAK_SETTINGS, normalizeOffPeakSettings, shouldBlockInbound } from './off-peak.mjs';
 
-const DOCUMENT_VERSION = 1;
+const DOCUMENT_VERSION = 2;
+const LEGACY_DOCUMENT_VERSION = 1;
 const stores = new Map();
 
 /**
@@ -28,7 +29,10 @@ export class OffPeakSettingsStore {
       throw error;
     });
     await this.#ready;
-    return { ...this.#settings };
+    return {
+      ...this.#settings,
+      syncedHolidays: [...this.#settings.syncedHolidays],
+    };
   }
 
   async #load() {
@@ -41,8 +45,16 @@ export class OffPeakSettingsStore {
     }
     const document = JSON.parse(raw);
     const settings = document.version === DOCUMENT_VERSION
-      && normalizeOffPeakSettings(document.offPeak);
+      ? normalizeOffPeakSettings(document.offPeak)
+      // v1 用 extraHolidays 表达用户手工补充的日期，迁移为 syncedHolidays。
+      : document.version === LEGACY_DOCUMENT_VERSION
+        ? normalizeOffPeakSettings({
+          enabled: document.offPeak?.enabled,
+          syncedHolidays: document.offPeak?.extraHolidays,
+        })
+        : null;
     if (!settings) throw new Error('Invalid off-peak settings document');
+    // 迁移后的设置只驻留内存；下一次 set() 会以 v2 文档原子写回。
     this.#settings = settings;
   }
 
@@ -67,7 +79,7 @@ export class OffPeakSettingsStore {
       } finally {
         await rm(temporary, { force: true });
       }
-      return { ...settings };
+      return { ...settings, syncedHolidays: [...settings.syncedHolidays] };
     });
     this.#writes = operation;
     return operation;

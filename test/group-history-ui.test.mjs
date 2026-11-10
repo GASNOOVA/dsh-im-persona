@@ -33,7 +33,8 @@ test('general and attachment panels display translated management failures witho
                   weekendOffPeak: true,
                   holidaysOffPeak: true,
                   holidayDates: [],
-                  extraHolidays: [],
+                  syncedHolidays: [],
+                  syncedAt: null,
                 },
               },
             };
@@ -94,7 +95,8 @@ test('General tab configures sidebar and retention and retains Attachments navig
             weekendOffPeak: true,
             holidaysOffPeak: true,
             holidayDates: [],
-            extraHolidays: [],
+            syncedHolidays: [],
+            syncedAt: null,
           },
         },
       };

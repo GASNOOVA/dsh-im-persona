@@ -6,15 +6,21 @@
  * 一半。空闲时段包括：工作日 12:00–14:00 与 18:00–次日 09:00、周末全天、中国
  * 法定节假日全天。调休上班的周末也按周末计（全天空闲）。
  *
- * 判断统一换算到北京时间（UTC+8）再做，避免受宿主时区或夏令时影响；法定节假日
- * 表内置 2026、2027 两年，后续年份可通过设置里的「额外节假日」补充。
+ * 判断统一换算到北京时间（UTC+8）再做，避免受宿主时区或夏令时影响。法定节假日
+ * 表内置 2026、2027 两年；后续年份可在设置页点击「同步节假日」，从
+ * holiday-cn（由国务院通知生成）手动同步并持久化到本机设置文件。
  */
+import { t } from './i18n.mjs';
+
 export const BEIJING_UTC_OFFSET_MINUTES = 8 * 60;
 
 export const DEEPSEEK_PEAK_WINDOWS = Object.freeze([
   Object.freeze({ start: '09:00', startMinute: 9 * 60, end: '12:00', endMinute: 12 * 60 }),
   Object.freeze({ start: '14:00', startMinute: 14 * 60, end: '18:00', endMinute: 18 * 60 }),
 ]);
+
+/** 内置节假日覆盖的年份；更晚年份通过「同步节假日」补充。 */
+export const OFF_PEAK_HOLIDAY_YEARS = Object.freeze([2026, 2027]);
 
 // 国务院办公厅 2026 年部分节假日安排（国办发明电〔2025〕7号）放假日期。
 export const OFF_PEAK_HOLIDAYS_2026 = Object.freeze([
@@ -48,12 +54,13 @@ export const BUILTIN_OFF_PEAK_HOLIDAYS = Object.freeze([
 ]);
 
 const BUILTIN_HOLIDAY_SET = new Set(BUILTIN_OFF_PEAK_HOLIDAYS);
-const MAX_EXTRA_HOLIDAYS = 60;
+const MAX_SYNCED_HOLIDAYS = 400;
 const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export const DEFAULT_OFF_PEAK_SETTINGS = Object.freeze({
   enabled: false,
-  extraHolidays: Object.freeze([]),
+  syncedHolidays: Object.freeze([]),
+  syncedAt: null,
 });
 
 function beijingParts(date) {
@@ -91,8 +98,8 @@ export function normalizeHolidayDate(value) {
   return `${match[1]}-${match[2]}-${match[3]}`;
 }
 
-/** 归一化「额外节假日」列表：接受数组，逐项校验、去重、排序。 */
-export function normalizeExtraHolidays(value) {
+/** 归一化已同步的节假日列表：接受数组，逐项校验、去重、排序。 */
+export function normalizeSyncedHolidays(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) return null;
   const dates = [];
@@ -104,26 +111,42 @@ export function normalizeExtraHolidays(value) {
     seen.add(dateKey);
     dates.push(dateKey);
   }
-  if (dates.length > MAX_EXTRA_HOLIDAYS) return null;
+  if (dates.length > MAX_SYNCED_HOLIDAYS) return null;
   return dates.sort();
 }
 
+/** 归一化同步时间：null 或可解析的 ISO 时间字符串；非法返回 undefined。 */
+export function normalizeSyncedAt(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return undefined;
+  return new Date(timestamp).toISOString();
+}
+
 /**
- * 归一化设置：enabled 必须是布尔；extraHolidays 缺省为空数组，提供时必须是
- * 合法的日期数组。返回冻结副本，避免调用方修改内部状态。
+ * 归一化设置：enabled 必须是布尔；syncedHolidays 缺省为空数组；syncedAt 缺省
+ * 为 null。返回冻结副本，避免调用方修改内部状态。
  */
 export function normalizeOffPeakSettings(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   if (typeof value.enabled !== 'boolean') return null;
-  const extraHolidays = normalizeExtraHolidays(value.extraHolidays);
-  if (extraHolidays === null) return null;
-  return Object.freeze({ enabled: value.enabled, extraHolidays: Object.freeze(extraHolidays) });
+  const syncedHolidays = normalizeSyncedHolidays(value.syncedHolidays);
+  if (syncedHolidays === null) return null;
+  const syncedAt = normalizeSyncedAt(value.syncedAt);
+  if (syncedAt === undefined) return null;
+  return Object.freeze({
+    enabled: value.enabled,
+    syncedHolidays: Object.freeze(syncedHolidays),
+    syncedAt,
+  });
 }
 
-function isHolidayAt(parts, extraHolidays) {
-  if (BUILTIN_HOLIDAY_SET.has(parts.dateKey)) return true;
-  if (Array.isArray(extraHolidays) && extraHolidays.includes(parts.dateKey)) return true;
-  return false;
+function holidaySetOf(settings) {
+  if (!settings) return BUILTIN_HOLIDAY_SET;
+  const synced = Array.isArray(settings.syncedHolidays) ? settings.syncedHolidays : [];
+  if (synced.length === 0) return BUILTIN_HOLIDAY_SET;
+  return new Set([...BUILTIN_OFF_PEAK_HOLIDAYS, ...synced]);
 }
 
 /**
@@ -134,10 +157,10 @@ function isHolidayAt(parts, extraHolidays) {
 export function isPeakAt(date = new Date(), settings = DEFAULT_OFF_PEAK_SETTINGS) {
   const parts = beijingParts(date);
   if (!parts) return false;
-  const extraHolidays = normalizeExtraHolidays(settings?.extraHolidays);
-  if (extraHolidays === null) return false;
   if (parts.weekday === 0 || parts.weekday === 6) return false; // 周末全天空闲
-  if (isHolidayAt(parts, extraHolidays)) return false; // 法定节假日全天空闲
+  if (holidaySetOf(normalizeOffPeakSettings(settings) ?? DEFAULT_OFF_PEAK_SETTINGS).has(parts.dateKey)) {
+    return false; // 法定节假日全天空闲
+  }
   return DEEPSEEK_PEAK_WINDOWS.some(
     (window) => parts.minuteOfDay >= window.startMinute && parts.minuteOfDay < window.endMinute,
   );
@@ -154,6 +177,10 @@ export function isOffPeakAt(date = new Date(), settings = DEFAULT_OFF_PEAK_SETTI
 export function offPeakStatus(settings = DEFAULT_OFF_PEAK_SETTINGS, now = new Date()) {
   const normalized = normalizeOffPeakSettings(settings) ?? DEFAULT_OFF_PEAK_SETTINGS;
   const peakNow = isPeakAt(now, normalized);
+  const holidayDates = [...new Set([
+    ...BUILTIN_OFF_PEAK_HOLIDAYS,
+    ...normalized.syncedHolidays,
+  ])].sort();
   return {
     enabled: normalized.enabled === true,
     offPeakNow: !peakNow,
@@ -164,10 +191,22 @@ export function offPeakStatus(settings = DEFAULT_OFF_PEAK_SETTINGS, now = new Da
       weekdays: '周一至周五',
       weekendOffPeak: true,
       holidaysOffPeak: true,
-      holidayDates: [...BUILTIN_OFF_PEAK_HOLIDAYS, ...normalized.extraHolidays],
-      extraHolidays: [...normalized.extraHolidays],
+      builtinHolidayYears: [...OFF_PEAK_HOLIDAY_YEARS],
+      holidayDates,
+      syncedHolidays: [...normalized.syncedHolidays],
+      syncedAt: normalized.syncedAt,
     },
   };
+}
+
+/**
+ * 静默期间给聊天对象的固定回复（不调用 API）：同一会话两次回复至少间隔
+ * 5 分钟，避免每个被丢弃的消息都刷屏。
+ */
+export const OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS = 5 * 60_000;
+
+export function offPeakSleepReplyText() {
+  return t('大肥鱼正在睡觉中，暂时没法回复消息，等空闲时段再来找我吧～');
 }
 
 /** 入站消息是否应被静默丢弃：仅当开关开启且当前处于高峰时段。 */

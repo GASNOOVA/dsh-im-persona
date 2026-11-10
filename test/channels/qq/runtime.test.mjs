@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import test from 'node:test';
 
 import { QqRuntime } from '../../../src/channels/qq/qq-runtime.mjs';
+import { offPeakSleepReplyText } from '../../../src/channels/shared/off-peak.mjs';
 import { rememberConnectionTestTarget } from '../../../src/channels/shared/connection-test.mjs';
 
 function deferred() {
@@ -312,7 +313,7 @@ test('QQ runtime enables result-file delivery without per-bot configuration', as
   await runtime.stop();
 });
 
-test('QQ runtime silently drops messages during DeepSeek peak hours when off-peak mode is enabled', async (t) => {
+test('QQ runtime answers addressed messages with a fixed sleep reply during DeepSeek peak hours', async (t) => {
   const bot = new FakeBot();
   const asks = [];
   let predicate;
@@ -352,6 +353,8 @@ test('QQ runtime silently drops messages during DeepSeek peak hours when off-pea
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(asks, []);
-  assert.deepEqual(bot.sent, []);
-  assert.equal(runtime.status.ready, true, 'the connection must stay ready while messages are dropped');
+  assert.equal(bot.sent.length, 1, 'the addressed message must receive the fixed sleep reply');
+  assert.equal(bot.sent[0].text, offPeakSleepReplyText());
+  assert.deepEqual(bot.sent[0].target, { scope: 'c2c', targetId: 'owner', msgId: 'qq-off-peak-gate' });
+  assert.equal(runtime.status.ready, true, 'the connection must stay ready while the model is skipped');
 });

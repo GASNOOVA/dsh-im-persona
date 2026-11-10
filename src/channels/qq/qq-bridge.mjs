@@ -81,6 +81,7 @@ import {
 } from '../shared/inbound-access.mjs';
 import { ApiError } from '@tencent-connect/qqbot-nodejs';
 import { sendMarkdownReply } from './markdown-reply.mjs';
+import { OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS, offPeakSleepReplyText } from '../shared/off-peak.mjs';
 import {
   isQqMenuCommand, parseQqMenuCommand, QqMenuStore,
   qqMenuPage, qqMenuView, sendQqMenu,
@@ -513,6 +514,7 @@ export class QqHarnessBridge {
   #approvalTasks = new Set();
   #commandTasks = new Set();
   #approvals;
+  #sleepReplyAt = new Map();
   #batchInputs = new BatchInputManager();
   #menus = new QqMenuStore();
   #menuTasks = new Map();
@@ -569,6 +571,29 @@ export class QqHarnessBridge {
 
   get status() {
     return structuredClone(this.#status);
+  }
+
+  /**
+   * 闲时启用高峰静默期间，给被 @ 的 QQ 会话回一条固定消息（不调用模型）。
+   * 同一聊天 5 分钟内最多一次，避免刷屏。
+   */
+  async replySleeping(message) {
+    const target = message?.replyTarget;
+    if (!target) return false;
+    const key = `${message?.kind === 'group' ? 'group' : 'c2c'}:${
+      nonEmptyString(message?.groupOpenid) ?? nonEmptyString(message?.senderId) ?? ''
+    }`;
+    const now = Date.now();
+    const last = this.#sleepReplyAt.get(key) ?? 0;
+    if (now - last < OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS) return false;
+    this.#sleepReplyAt.set(key, now);
+    try {
+      await this.#bot.sendText(target, offPeakSleepReplyText());
+      return true;
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:qq] failed to send the off-peak sleep reply:', error);
+      return false;
+    }
   }
 
   accept(message) {

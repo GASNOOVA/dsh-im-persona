@@ -81,5 +81,6 @@ export default {
   "重置当前会话上下文失败，当前会话未修改，请稍后重试。": "Could not reset the current session context; it is unchanged. Please try again later.",
   "当前会话上下文已重置（编号保持不变）。旧会话 ID：{id}，可用 /session {id} 重新绑定。": "The current session context is reset (the number is unchanged). Old session ID: {id}; rebind it with /session {id}.",
   "当前聊天还没有会话，已开启全新会话。": "This chat has no session yet, so a new session was started.",
+  "大肥鱼正在睡觉中，暂时没法回复消息，等空闲时段再来找我吧～": "Dafeiyu is sleeping and cannot reply right now — come back during off-peak hours!",
   "/ls 或 /list  列出本聊天使用过的会话（● 当前，←/→ 可前后切换，✕ 已失效；列表按聊天隔离）": "/ls or /list  List sessions used in this chat (● current, ←/→ switch; ✕ invalid; the list is per chat)",
 };
