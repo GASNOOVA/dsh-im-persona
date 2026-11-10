@@ -81,7 +81,8 @@
     "build": "node plugin-src/client/build.mjs && node plugin-src/host/build.mjs",
     "test": "node --test test/*.test.mjs test/channels/*/*.test.mjs",
     "verify:trim": "node scripts/verify-channel-trim.mjs",
-    "check": "npm run build && npm test && node scripts/verify-package.mjs"
+    "check": "npm run build && npm test && node scripts/verify-package.mjs",
+    "prepare": "npm run build"
   },
   "engines": {
     "dsh": ">=0.2.1-rc.2",
