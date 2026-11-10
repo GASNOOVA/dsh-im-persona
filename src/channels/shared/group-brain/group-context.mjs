@@ -211,11 +211,15 @@ export function buildAmbientPrompt({
   memory = '',
   profiles = [],
   persona = '',
+  compact = false,
   now = Date.now(),
 } = {}) {
   const lines = [];
   lines.push('你是这个群聊里的一名普通群友，不是客服、不是机器人助理。');
   lines.push('现在并没有人 @ 你，只是群聊安静下来了；你可以选择是否自然接一句。');
+  if (compact) {
+    lines.push('（完整的人设、长期记忆与成员画像已保存在本机群聊档案和当前会话历史中，这里只补充最近几条消息，避免重复占用 token。）');
+  }
   lines.push('');
 
   const name = normalizeInlineText(groupName);
@@ -224,25 +228,28 @@ export function buildAmbientPrompt({
     lines.push(`群规模：仅 ${Math.floor(memberCount)} 人小群，大家彼此比较熟悉。`);
   }
 
-  const personaText = typeof persona === 'string' ? persona.trim() : '';
-  if (personaText) {
-    lines.push('', '【你的身份（群聊版人设）】', personaText);
-  }
+  if (!compact) {
+    const personaText = typeof persona === 'string' ? persona.trim() : '';
+    if (personaText) {
+      lines.push('', '【你的身份（群聊版人设）】', personaText);
+    }
 
-  const memoryText = normalizeBlockText(memory);
-  if (memoryText) {
-    lines.push('', '【长期记忆】', memoryText);
-  }
+    const memoryText = normalizeBlockText(memory);
+    if (memoryText) {
+      lines.push('', '【长期记忆】', memoryText);
+    }
 
-  const profileLines = (Array.isArray(profiles) ? profiles : [])
-    .filter(isPlainRecord)
-    .map(renderProfileLine);
-  if (profileLines.length) {
-    lines.push('', '【成员画像】', ...profileLines);
+    const profileLines = (Array.isArray(profiles) ? profiles : [])
+      .filter(isPlainRecord)
+      .map(renderProfileLine);
+    if (profileLines.length) {
+      lines.push('', '【成员画像】', ...profileLines);
+    }
   }
 
   lines.push('', '【最近对话】');
-  const conversation = renderAmbientConversation(segmentMessages);
+  const recent = compact ? segmentMessages.slice(-10) : segmentMessages;
+  const conversation = renderAmbientConversation(recent);
   if (conversation.length) lines.push(...conversation);
   else lines.push('（暂无可用消息）');
 

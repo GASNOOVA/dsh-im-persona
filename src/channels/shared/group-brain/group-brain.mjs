@@ -87,6 +87,7 @@ export class GroupBrain {
   #generate;
   #send;
   #resolvePersona;
+  #sessionExists = null;
   #logger;
   #now;
   #timerFns;
@@ -110,6 +111,7 @@ export class GroupBrain {
     generate,
     send = null,
     resolvePersona = null,
+    sessionExists = null,
     logger = console,
     now = () => Date.now(),
     timerFns = {},
@@ -126,6 +128,7 @@ export class GroupBrain {
     this.#generate = generate;
     this.#send = typeof send === 'function' ? send : null;
     this.#resolvePersona = typeof resolvePersona === 'function' ? resolvePersona : null;
+    this.#sessionExists = typeof sessionExists === 'function' ? sessionExists : null;
     this.#logger = logger ?? console;
     this.#now = now;
     this.#timerFns = {
@@ -521,11 +524,14 @@ export class GroupBrain {
         .slice(-AMBIENT_SEGMENT_LIMIT);
       if (segment.length < settings.ambient.minMessages) return;
 
-      const memory = await store.getMemory().catch(() => '');
-      const profileList = settings.profiles.enabled === true
+      // 同一群已经用同一个 DSH 会话聊过时，完整人设/记忆/画像已在该会话历史里，
+      // 这里只补充最近消息，避免每轮重复注入大块内容浪费 token。
+      const reused = await this.#isSessionReused(chatId);
+      const memory = reused ? '' : await store.getMemory().catch(() => '');
+      const profileList = !reused && settings.profiles.enabled === true
         ? this.#orderedProfiles(await this.#profilesFor(chatId)).slice(0, settings.profiles.maxProfiles)
         : [];
-      const persona = await this.#personaText();
+      const persona = reused ? '' : await this.#personaText();
       const prompt = buildAmbientPrompt({
         groupName: record.groupName,
         memberCount: record.memberCount,
@@ -533,6 +539,7 @@ export class GroupBrain {
         memory,
         profiles: profileList,
         persona,
+        compact: reused,
         now: this.#now(),
       });
 
@@ -584,6 +591,16 @@ export class GroupBrain {
     } catch (error) {
       this.#logger.warn?.('[dsh-im] group brain persona resolve failed:', error);
       return null;
+    }
+  }
+
+  async #isSessionReused(chatId) {
+    if (!this.#sessionExists) return false;
+    try {
+      return (await this.#sessionExists(chatId)) === true;
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im] unable to resolve group session state:', error);
+      return false;
     }
   }
 

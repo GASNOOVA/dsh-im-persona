@@ -16,6 +16,10 @@ import { AMBIENT_REPLY_MAX_CHARS, SKIP_TOKEN } from '../shared/group-brain/group
 export const WECHAT_PERSONAL_MAX_REPLY_CHARS = 4_000;
 /** @ 直通回复时带入的最近聊天条数。 */
 export const WECHAT_PERSONAL_TRANSCRIPT_LIMIT = 20;
+/** 同一群已复用 DSH 会话时，只补最近几条消息，避免重复注入历史。 */
+export const WECHAT_PERSONAL_COMPACT_TRANSCRIPT_LIMIT = 8;
+/** 连续对话（follow-up）复用会话时补充的最近消息条数。 */
+export const WECHAT_PERSONAL_COMPACT_FOLLOW_UP_LIMIT = 6;
 /** 群名/成员缓存时间：避免每条消息都打 daemon。 */
 export const WECHAT_PERSONAL_GROUP_CACHE_MS = 60_000;
 /** SSE 断线后的重连等待。 */
@@ -68,6 +72,7 @@ export class WechatPersonalGroupBridge {
   #brain;
   #generate;
   #resolvePersona;
+  #sessionExists = null;
   #accountId;
   #ownUserId;
   #statePath;
@@ -88,6 +93,7 @@ export class WechatPersonalGroupBridge {
     brain,
     generate,
     resolvePersona = null,
+    sessionExists = null,
     accountId,
     ownUserId,
     statePath,
@@ -104,6 +110,7 @@ export class WechatPersonalGroupBridge {
     this.#brain = brain;
     this.#generate = generate;
     this.#resolvePersona = typeof resolvePersona === 'function' ? resolvePersona : null;
+    this.#sessionExists = typeof sessionExists === 'function' ? sessionExists : null;
     this.#accountId = accountId;
     this.#ownUserId = ownUserId;
     this.#statePath = textOf(statePath) || join(process.cwd(), 'wechat-personal-cursor.json');
@@ -310,9 +317,18 @@ export class WechatPersonalGroupBridge {
 
   async #replyDirect({ event, observed, message }) {
     try {
-      const persona = await this.#persona();
-      const transcript = await this.#recentTranscript(event.chatId, message.id, event.groupName);
-      const blocks = (observed.blocks ?? []).filter((block) => typeof block === 'string' && block.trim());
+      // 同一个群复用统一 DSH 会话：第一次完整注入人设/记忆/画像，之后只补新消息。
+      const reused = await this.#isSessionReused(event.chatId);
+      const persona = reused ? null : await this.#persona();
+      const transcript = await this.#recentTranscript(
+        event.chatId,
+        message.id,
+        event.groupName,
+        reused ? WECHAT_PERSONAL_COMPACT_TRANSCRIPT_LIMIT : this.#transcriptLimit,
+      );
+      const blocks = (observed.blocks ?? [])
+        .filter((block) => typeof block === 'string' && block.trim())
+        .filter((block) => !reused || !block.includes('<dsh_im_group_memory>'));
       const sections = [];
       if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
@@ -334,8 +350,14 @@ export class WechatPersonalGroupBridge {
   /** 被 @ 后的连续对话窗口：未 @ 的群消息也自然接一句，延续聊天。 */
   async #replyFollowUp({ event, message }) {
     try {
-      const persona = await this.#persona();
-      const transcript = await this.#recentTranscript(event.chatId, message.id, event.groupName);
+      const reused = await this.#isSessionReused(event.chatId);
+      const persona = reused ? null : await this.#persona();
+      const transcript = await this.#recentTranscript(
+        event.chatId,
+        message.id,
+        event.groupName,
+        reused ? WECHAT_PERSONAL_COMPACT_FOLLOW_UP_LIMIT : this.#transcriptLimit,
+      );
       const sections = [];
       if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
@@ -357,6 +379,16 @@ export class WechatPersonalGroupBridge {
     }
   }
 
+  async #isSessionReused(chatId) {
+    if (!this.#sessionExists) return false;
+    try {
+      return (await this.#sessionExists(chatId)) === true;
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] unable to resolve session state:', error?.message ?? error);
+      return false;
+    }
+  }
+
   async #persona() {
     if (!this.#resolvePersona) return null;
     try {
@@ -370,12 +402,12 @@ export class WechatPersonalGroupBridge {
     }
   }
 
-  async #recentTranscript(chatId, currentMessageId, groupName) {
+  async #recentTranscript(chatId, currentMessageId, groupName, limit = this.#transcriptLimit) {
     try {
-      const messages = await this.#client.listMessages(chatId, { limit: this.#transcriptLimit + 1 });
+      const messages = await this.#client.listMessages(chatId, { limit: limit + 1 });
       const lines = messages
         .filter((message) => message && message.id !== currentMessageId && textOf(message.body))
-        .slice(0, this.#transcriptLimit)
+        .slice(0, limit)
         .reverse()
         .map((message) => formatTranscriptLine(message, (senderId) => this.#groupCache.get(chatId)?.members.get(senderId) ?? textOf(senderId)));
       if (lines.length === 0) return '';

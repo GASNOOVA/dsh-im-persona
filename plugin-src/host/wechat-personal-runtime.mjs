@@ -29,6 +29,7 @@ import {
 } from '../../src/channels/wechat-personal/agent-wechat-client.mjs';
 import { WechatPersonalGroupBridge } from '../../src/channels/wechat-personal/wechat-personal-brain.mjs';
 import { createHarnessGroupBrainGenerator } from './group-brain-runtime.mjs';
+import { getGroupBrainSessionRegistry, groupBrainSessionKey } from './group-brain-sessions.mjs';
 import { harnessConnection } from './harness-connection.mjs';
 import { HarnessClient } from '../../src/channels/weixin/harness-client.mjs';
 
@@ -178,6 +179,12 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
     if (!ownUserId) throw new Error('微信个人号账号缺少 ownUsername');
     const offPeakSettings = internals.offPeakSettings ?? getOffPeakSettingsStore({ dshHome: config.dshHome });
     await offPeakSettings.get().catch(() => {});
+    const sessionRegistry = internals.sessionRegistry
+      ?? (internals.generate ? null : getGroupBrainSessionRegistry({ dshHome: config.dshHome, logger: channelLogger(logger) }));
+    const sessionExists = internals.sessionExists
+      ?? (sessionRegistry
+        ? async (chatId) => Boolean(await sessionRegistry.get(groupBrainSessionKey('wechat-personal', settings.accountId, chatId)))
+        : null);
     const rawGenerate = internals.generate ?? createHarnessGroupBrainGenerator({
       harness: await createHarness(),
       logger,
@@ -186,6 +193,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       channel: 'wechat-personal',
       botId: settings.accountId,
       dshHome: config.dshHome,
+      registry: sessionRegistry,
     });
     const generate = async (request) => {
       let blocked = false;
@@ -205,6 +213,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
         return bridgeRef.sendAmbient(payload);
       },
       resolvePersona,
+      sessionExists,
       logger: channelLogger(logger),
     });
     await brain.load?.();
@@ -214,6 +223,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       brain,
       generate,
       resolvePersona,
+      sessionExists,
       accountId: settings.accountId,
       ownUserId,
       statePath: cursorPathOf(config, settings.accountId),

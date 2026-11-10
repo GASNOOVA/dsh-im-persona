@@ -120,6 +120,37 @@ test('buildAmbientPrompt：包含群聊 persona 全文、群规模、记忆、�
   assert.ok(prompt.includes(SKIP_TOKEN));
 });
 
+test('buildAmbientPrompt：复用会话时 compact 省掉人设/记忆/画像，只留最近对话与输出要求', () => {
+  const persona = '## 人设：大肥鱼（群聊版）\n- 你是群友，不是客服。';
+  const messages = Array.from({ length: 20 }, (_, index) => ({
+    at: at(9, 0) + index * 1_000,
+    senderName: `友${index}`,
+    text: `M${index}`,
+  }));
+  const prompt = buildAmbientPrompt({
+    groupName: '爬山群',
+    memberCount: 4,
+    segmentMessages: messages,
+    memory: '大家约过三次爬山。',
+    profiles: [{ displayName: '阿明', summary: '组织者' }],
+    persona,
+    compact: true,
+  });
+
+  assert.equal(prompt.includes(persona), false, '复用会话时不应再注入人设全文');
+  assert.equal(prompt.includes('【长期记忆】'), false, '复用会话时不应再注入长期记忆');
+  assert.equal(prompt.includes('【成员画像】'), false, '复用会话时不应再注入成员画像');
+  assert.equal(prompt.includes('大家约过三次爬山。'), false);
+  assert.ok(prompt.includes('群名：爬山群'));
+  assert.ok(prompt.includes('【最近对话】'));
+  assert.ok(prompt.includes('M19'), '应保留最新消息');
+  const conversation = prompt.split('【最近对话】')[1].split('【输出要求】')[0];
+  const lines = conversation.trim().split('\n').filter((line) => line.startsWith('['));
+  assert.equal(lines.length, 10, 'compact 模式最近对话只带 10 条');
+  assert.ok(prompt.includes(SKIP_TOKEN));
+  assert.ok(prompt.includes('不 @ 任何人'));
+});
+
 test('buildAmbientPrompt：最近对话最多 30 条，只保留最新部分', () => {
   const messages = Array.from({ length: 40 }, (_, index) => ({
     at: at(9, 0) + index * 1_000,

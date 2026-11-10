@@ -135,6 +135,65 @@ test('an @ message becomes a direct reply with mentions', async () => {
   }
 });
 
+test('a reused DSH session omits persona and memory block from later @ replies', async () => {
+  const history = Array.from({ length: 15 }, (_, index) => ({
+    id: `history-${index}`,
+    threadId: GROUP_ID,
+    direction: 'incoming',
+    senderId: SENDER_ID,
+    body: `旧的聊天 ${index}`,
+    createdAt: `2026-11-10T05:${String(index).padStart(2, '0')}:00+00:00`,
+    mentions: { self: false, userIds: [] },
+  }));
+  const messages = [
+    {
+      id: 'msg-1',
+      threadId: GROUP_ID,
+      direction: 'incoming',
+      senderId: SENDER_ID,
+      body: '大肥鱼 在吗',
+      createdAt: '2026-11-10T05:18:27+00:00',
+      mentions: { self: true, userIds: [OWN_ID] },
+    },
+    ...history,
+  ];
+  const client = fakeClient({
+    messages,
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [{ id: SENDER_ID, displayName: 'Zach' }] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }],
+  });
+  client.events = [{ cursor: '9', kind: 'message.committed', payload: { messageId: 'msg-1', direction: 'incoming' } }];
+  const brain = fakeBrain({ direct: true });
+  const prompts = [];
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain,
+    generate: async (request) => { prompts.push(request.prompt); return '在的在的。'; },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    sessionExists: async () => true,
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 1, 'reply should be sent');
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0].includes('你是大肥鱼。'), false, '复用会话时不再重复注入人设');
+    assert.equal(prompts[0].includes('<dsh_im_group_memory>'), false, '复用会话时不再重复注入记忆块');
+    assert.match(prompts[0], /<dsh_im_direct_instruction>/u);
+    assert.match(prompts[0], /大肥鱼 在吗/u);
+    const transcript = prompts[0].split('最近聊天：')[1].split('群成员')[0];
+    const lines = transcript.trim().split('\n').filter((line) => line.startsWith('['));
+    assert.ok(lines.length <= 8, `复用会话时最近聊天最多 8 条，实际 ${lines.length} 条`);
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('an unaddressed group message is recorded but never answered', async () => {
   const messages = [{
     id: 'msg-2',
