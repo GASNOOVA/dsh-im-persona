@@ -25,8 +25,8 @@ export const WECHAT_PERSONAL_COMPACT_FOLLOW_UP_LIMIT = 6;
 /** 每个群最多缓存的待回复任务数（含续聊与 @ 直连）。 */
 export const WECHAT_PERSONAL_REPLY_QUEUE_LIMIT = 100;
 
-/** 续聊回复前的合并窗口：同一成员连续快速发言时合并成一次回复。 */
-export const WECHAT_PERSONAL_REPLY_QUEUE_DELAY_MS = 120;
+/** 续聊回复前的默认合并窗口：同一成员连续发言时合并成一次回复。 */
+export const WECHAT_PERSONAL_REPLY_MERGE_WINDOW_MS = 30_000;
 /** 群名/成员缓存时间：避免每条消息都打 daemon。 */
 export const WECHAT_PERSONAL_GROUP_CACHE_MS = 60_000;
 /** SSE 断线后的重连等待。 */
@@ -96,6 +96,7 @@ export class WechatPersonalGroupBridge {
   #logger;
   #now;
   #transcriptLimit;
+  #mergeWindowMs;
   #abortController = null;
   #loopPromise = null;
   #running = false;
@@ -120,6 +121,7 @@ export class WechatPersonalGroupBridge {
     logger = console,
     now = () => Date.now(),
     transcriptLimit = WECHAT_PERSONAL_TRANSCRIPT_LIMIT,
+    mergeWindowMs = WECHAT_PERSONAL_REPLY_MERGE_WINDOW_MS,
   } = {}) {
     if (!client) throw new TypeError('WechatPersonalGroupBridge requires a client');
     if (!brain) throw new TypeError('WechatPersonalGroupBridge requires a group brain');
@@ -138,6 +140,9 @@ export class WechatPersonalGroupBridge {
     this.#logger = logger ?? console;
     this.#now = now;
     this.#transcriptLimit = Number.isInteger(transcriptLimit) && transcriptLimit > 0 ? transcriptLimit : WECHAT_PERSONAL_TRANSCRIPT_LIMIT;
+    this.#mergeWindowMs = Number.isInteger(mergeWindowMs) && mergeWindowMs >= 0
+      ? mergeWindowMs
+      : WECHAT_PERSONAL_REPLY_MERGE_WINDOW_MS;
   }
 
   get accountId() {
@@ -208,7 +213,8 @@ export class WechatPersonalGroupBridge {
   async stop() {
     this.#running = false;
     for (const queue of this.#replyQueues.values()) {
-      if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
+      for (const timer of queue.timers.values()) clearTimeout(timer);
+      queue.timers.clear();
     }
     this.#abortController?.abort();
     const promise = this.#loopPromise;
@@ -357,70 +363,94 @@ export class WechatPersonalGroupBridge {
   #replyQueueFor(chatId) {
     let queue = this.#replyQueues.get(chatId);
     if (!queue) {
-      queue = { jobs: [], worker: null, timer: null };
+      queue = { jobs: [], worker: null, timers: new Map() };
       this.#replyQueues.set(chatId, queue);
     }
     return queue;
   }
 
+  #senderKeyOf(job) {
+    return textOf(job?.event?.senderId) || 'unknown';
+  }
+
+  #clearSenderTimer(queue, senderKey) {
+    const timer = queue.timers.get(senderKey);
+    if (timer) { clearTimeout(timer); queue.timers.delete(senderKey); }
+  }
+
+  #scheduleSenderTimer(chatId, queue, senderKey) {
+    if (this.#mergeWindowMs <= 0) {
+      this.#clearSenderTimer(queue, senderKey);
+      return;
+    }
+    this.#clearSenderTimer(queue, senderKey);
+    const timer = setTimeout(() => {
+      queue.timers.delete(senderKey);
+      void this.#drainReplyQueue(chatId);
+    }, this.#mergeWindowMs);
+    timer.unref?.();
+    queue.timers.set(senderKey, timer);
+  }
+
   #enqueueReply(chatId, job) {
     const queue = this.#replyQueueFor(chatId);
-    if (job.kind === 'follow-up') {
-      const sameSender = queue.jobs.find((entry) => entry.kind === 'follow-up' && entry.event.senderId === job.event.senderId);
-      if (sameSender) {
-        sameSender.event = { ...job.event, text: `${sameSender.event.text}\n${job.event.text}` };
-        sameSender.message = job.message;
-        sameSender.merged = (sameSender.merged ?? 1) + 1;
-        return;
-      }
-    }
-    if (queue.jobs.length >= WECHAT_PERSONAL_REPLY_QUEUE_LIMIT) {
-      const index = queue.jobs.findIndex((entry) => entry.kind === 'follow-up');
-      if (index < 0) {
-        this.#logger.warn?.('[dsh-im:wechat-personal] reply queue is full, dropping the message');
-        return;
-      }
-      queue.jobs.splice(index, 1);
-      this.#logger.warn?.('[dsh-im:wechat-personal] reply queue is full, dropping an older follow-up');
-    }
-    // @ 直连优先于普通续聊，保证被点名时尽快回复；续聊留一个很短的合并窗口，
-    // 让同一成员的连续发言合并为一次回复。
+    const senderKey = this.#senderKeyOf(job);
     if (job.kind === 'direct') {
+      // @ 直连优先：立即回复，并清掉同一成员尚未发出的续聊（其内容已在会话记录里）。
+      for (let index = queue.jobs.length - 1; index >= 0; index -= 1) {
+        const entry = queue.jobs[index];
+        if (entry.kind === 'follow-up' && this.#senderKeyOf(entry) === senderKey) queue.jobs.splice(index, 1);
+      }
+      this.#clearSenderTimer(queue, senderKey);
       queue.jobs.unshift(job);
-      if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
       void this.#drainReplyQueue(chatId);
       return;
     }
-    queue.jobs.push(job);
-    if (!queue.worker && !queue.timer) {
-      queue.timer = setTimeout(() => {
-        queue.timer = null;
-        void this.#drainReplyQueue(chatId);
-      }, WECHAT_PERSONAL_REPLY_QUEUE_DELAY_MS);
-      queue.timer.unref?.();
+    const sameSender = queue.jobs.find((entry) => entry.kind === 'follow-up' && this.#senderKeyOf(entry) === senderKey);
+    if (sameSender) {
+      sameSender.event = { ...job.event, text: `${sameSender.event.text}\n${job.event.text}` };
+      sameSender.message = job.message;
+      sameSender.merged = (sameSender.merged ?? 1) + 1;
+    } else {
+      if (queue.jobs.length >= WECHAT_PERSONAL_REPLY_QUEUE_LIMIT) {
+        const index = queue.jobs.findIndex((entry) => entry.kind === 'follow-up');
+        if (index < 0) {
+          this.#logger.warn?.('[dsh-im:wechat-personal] reply queue is full, dropping the message');
+          return;
+        }
+        queue.jobs.splice(index, 1);
+        this.#logger.warn?.('[dsh-im:wechat-personal] reply queue is full, dropping an older follow-up');
+      }
+      queue.jobs.push(job);
     }
+    // 同一成员在合并窗口内继续发言时重置计时；窗口结束后统一回复一次。
+    this.#scheduleSenderTimer(chatId, queue, senderKey);
+    void this.#drainReplyQueue(chatId);
   }
 
   #drainReplyQueue(chatId) {
     const queue = this.#replyQueueFor(chatId);
     if (queue.worker) return queue.worker;
-    if (queue.timer) { clearTimeout(queue.timer); queue.timer = null; }
-    queue.worker = (async () => {
-      try {
-        while (queue.jobs.length > 0) {
-          const job = queue.jobs.shift();
-          try {
-            if (job.kind === 'direct') await this.#replyDirect(job);
-            else await this.#replyFollowUp({ event: job.event, message: job.message });
-          } catch (error) {
-            this.#logger.warn?.(`[dsh-im:wechat-personal] ${job.kind} reply failed:`, error?.message ?? error);
-          }
+    const worker = (async () => {
+      for (;;) {
+        const index = queue.jobs.findIndex((job) => job.kind === 'direct' || !queue.timers.has(this.#senderKeyOf(job)));
+        if (index < 0) break;
+        const [job] = queue.jobs.splice(index, 1);
+        try {
+          if (job.kind === 'direct') await this.#replyDirect(job);
+          else await this.#replyFollowUp({ event: job.event, message: job.message });
+        } catch (error) {
+          this.#logger.warn?.(`[dsh-im:wechat-personal] ${job.kind} reply failed:`, error?.message ?? error);
         }
-      } finally {
-        queue.worker = null;
       }
     })();
-    return queue.worker;
+    queue.worker = worker;
+    // worker 一启动就可能同步结束（队列里暂时没有就绪任务），必须在 promise 赋值后再清空，
+    // 否则会让 queue.worker 永久保持为已完成的 Promise，后续 drain 全部被短路。
+    worker.catch(() => {}).finally(() => {
+      if (queue.worker === worker) queue.worker = null;
+    });
+    return worker;
   }
 
   async #isSleepingNow() {

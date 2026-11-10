@@ -33,7 +33,9 @@ export const DEFAULT_GROUP_BRAIN_SETTINGS = Object.freeze({
     // 被 @ 之后的连续对话窗口：窗口内未 @ 的群消息也会触发自然回复。
     followUpMs: 300_000,
     followUpMaxReplies: 8,
-    followUpMinIntervalMs: 8_000,
+    followUpMinIntervalMs: 3_000,
+    // 同一成员的连续消息合并窗口（毫秒）：窗口内连续发言合并成一次回复。
+    mergeWindowMs: 30_000,
   }),
   memory: Object.freeze({
     consolidateIntervalDays: 30,
@@ -68,6 +70,7 @@ export const GROUP_BRAIN_LIMITS = Object.freeze({
   followUpMs: Object.freeze([0, 600_000]),
   followUpMaxReplies: Object.freeze([0, 100]),
   followUpMinIntervalMs: Object.freeze([0, 300_000]),
+  mergeWindowMs: Object.freeze([0, 120_000]),
   consolidateIntervalDays: Object.freeze([1, 365]),
   segmentGapMs: Object.freeze([60_000, 86_400_000]),
   maxMemoryChars: Object.freeze([2_000, 64_000]),
@@ -185,6 +188,11 @@ export function normalizeGroupBrainSettings(value) {
         ambient.followUpMinIntervalMs,
         defaults.ambient.followUpMinIntervalMs,
         GROUP_BRAIN_LIMITS.followUpMinIntervalMs,
+      ),
+      mergeWindowMs: readInteger(
+        ambient.mergeWindowMs,
+        defaults.ambient.mergeWindowMs,
+        GROUP_BRAIN_LIMITS.mergeWindowMs,
       ),
     }),
     memory: Object.freeze({

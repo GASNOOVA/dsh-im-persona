@@ -265,6 +265,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       accountId: settings.accountId,
       ownUserId,
       statePath: cursorPathOf(config, settings.accountId),
+      mergeWindowMs: settings.ambient?.mergeWindowMs,
       logger: channelLogger(logger),
     });
     bridgeRef = bridge;

@@ -15,7 +15,7 @@ const DEFAULT_BRAIN_TEMPLATE = Object.freeze({
   enabled: true,
   maxMembers: 5,
   allowedGroups: [],
-  ambient: { enabled: true, silenceMs: 120_000, minMessages: 2, cooldownMs: 600_000, maxPerHour: 4, maxPerDay: 40, followUpMs: 300_000, followUpMaxReplies: 8, followUpMinIntervalMs: 8_000 },
+  ambient: { enabled: true, silenceMs: 120_000, minMessages: 2, cooldownMs: 600_000, maxPerHour: 4, maxPerDay: 40, followUpMs: 300_000, followUpMaxReplies: 8, followUpMinIntervalMs: 3_000, mergeWindowMs: 30_000 },
   memory: { consolidateIntervalDays: 30, segmentGapMs: 600_000, maxMemoryChars: 16_000 },
   profiles: { enabled: true, maxProfiles: 5 },
   wechatPersonal: {
@@ -52,6 +52,7 @@ function normalizeSettings(value) {
       followUpMs: ambient.followUpMs ?? DEFAULT_BRAIN_TEMPLATE.ambient.followUpMs,
       followUpMaxReplies: ambient.followUpMaxReplies ?? DEFAULT_BRAIN_TEMPLATE.ambient.followUpMaxReplies,
       followUpMinIntervalMs: ambient.followUpMinIntervalMs ?? DEFAULT_BRAIN_TEMPLATE.ambient.followUpMinIntervalMs,
+      mergeWindowMs: ambient.mergeWindowMs ?? DEFAULT_BRAIN_TEMPLATE.ambient.mergeWindowMs,
     },
     memory: {
       consolidateIntervalDays: memory.consolidateIntervalDays ?? DEFAULT_BRAIN_TEMPLATE.memory.consolidateIntervalDays,
@@ -348,8 +349,13 @@ export function GroupBrainSettings({ rpcCall }) {
           }),
           h(NumberField, {
             id: `${id}-follow-up-interval`, label: '续聊最小间隔', unit: '秒', value: seconds(draft.ambient.followUpMinIntervalMs), min: 0, max: 300,
-            help: '连续对话中最快多久回一句，避免刷屏。', disabled,
+            help: '连续对话中最快多久回一句，避免刷屏；默认 3 秒。', disabled,
             onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMinIntervalMs: milliseconds(value) } }),
+          }),
+          h(NumberField, {
+            id: `${id}-merge-window`, label: '同成员合并窗口', unit: '秒', value: seconds(draft.ambient.mergeWindowMs), min: 0, max: 120,
+            help: '同一成员在这段时间内的连续消息合并成一次回复；0 表示收到就回复。', disabled,
+            onChange: (value) => patch({ ambient: { ...draft.ambient, mergeWindowMs: milliseconds(value) } }),
           }),
           h(NumberField, {
             id: `${id}-per-hour`, label: '每小时上限', value: draft.ambient.maxPerHour, min: 1, max: 30,

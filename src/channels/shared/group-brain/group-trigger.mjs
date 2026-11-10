@@ -21,7 +21,7 @@ export const DEFAULT_GROUP_TRIGGER = Object.freeze({
   maxPerDay: 40,
   followUpMs: 300_000,
   followUpMaxReplies: 8,
-  followUpMinIntervalMs: 8_000,
+  followUpMinIntervalMs: 3_000,
 });
 
 /** 限流窗口长度（毫秒）。 */

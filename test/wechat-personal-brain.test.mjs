@@ -110,6 +110,7 @@ test('an @ message becomes a direct reply with mentions', async () => {
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -164,6 +165,7 @@ test('a sleeping bridge replies with the fixed message instead of calling the mo
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -221,6 +223,7 @@ test('a reused DSH session omits persona and memory block from later @ replies',
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -266,6 +269,7 @@ test('an unaddressed group message is recorded but never answered', async () => 
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -292,6 +296,7 @@ test('sendAmbient sends text and records a bot message', async () => {
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -318,6 +323,7 @@ test('first start begins at the daemon cursor instead of replaying history', asy
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -361,6 +367,7 @@ test('a follow-up window message replies naturally without an @ mention', async 
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -417,6 +424,7 @@ test('queues replies for different members and answers each in order', async () 
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 30,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -465,6 +473,7 @@ test('merges consecutive messages from the same member into one reply', async ()
     accountId: 'xiaohao',
     ownUserId: OWN_ID,
     statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 30,
     logger: { warn() {}, info() {}, error() {} },
   });
   try {
@@ -474,6 +483,40 @@ test('merges consecutive messages from the same member into one reply', async ()
     assert.equal(prompts.length, 1);
     assert.match(prompts[0], /第一句/u);
     assert.match(prompts[0], /第二句/u);
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('waits for the configured merge window before replying to a follow-up', async () => {
+  const messages = [
+    { id: 'msg-window', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, body: '窗口测试', createdAt: '2026-11-10T05:10:00+00:00', mentions: { self: false, userIds: [] } },
+  ];
+  const client = fakeClient({
+    messages,
+    latestCursor: '0',
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }, { id: OWN_ID, displayName: '大肥鱼版' }],
+  });
+  client.events = [{ cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-window', direction: 'incoming' } }];
+  const home = await mkdtemp(join(tmpdir(), 'wp-window-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain: fakeBrain({ direct: false, followUp: true }),
+    generate: async () => '窗口回复',
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 120,
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(client.sent.length, 0, 'follow-up reply must wait for the merge window');
+    await waitFor(() => client.sent.length === 1, 'reply should arrive after the merge window');
+    assert.equal(client.sent[0].text, '窗口回复');
   } finally {
     await bridge.stop();
     await rm(home, { recursive: true, force: true });
