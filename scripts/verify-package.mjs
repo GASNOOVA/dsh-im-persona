@@ -133,13 +133,15 @@ const deliverySyncSettingsSource = await readFile(
 );
 const personaSettingsSource = await readFile(resolve(root, 'plugin-src/client/persona-settings.js'), 'utf8');
 const offPeakSettingsSource = await readFile(resolve(root, 'plugin-src/client/off-peak-settings.js'), 'utf8');
+const groupBrainSettingsSource = await readFile(resolve(root, 'plugin-src/client/group-brain-settings.js'), 'utf8');
 const otherClientSources = clientSources
   .replace(contextEditorSource, '')
   .replace(deliverySettingsSource, '')
   .replace(botGeneralSettingsSource, '')
   .replace(deliverySyncSettingsSource, '')
   .replace(personaSettingsSource, '')
-  .replace(offPeakSettingsSource, '');
+  .replace(offPeakSettingsSource, '')
+  .replace(groupBrainSettingsSource, '');
 if (/role:\s*["']switch|type:\s*["']checkbox/.test(otherClientSources)
   || (deliverySettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
   || /role:\s*["']switch["']/u.test(deliverySettingsSource)
@@ -148,10 +150,17 @@ if (/role:\s*["']switch|type:\s*["']checkbox/.test(otherClientSources)
   || /role:\s*["']switch|type:\s*["']checkbox/u.test(personaSettingsSource)
   || (offPeakSettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
   || (offPeakSettingsSource.match(/role:\s*["']switch["']/g) ?? []).length !== 1
+  || (groupBrainSettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
+  || (groupBrainSettingsSource.match(/role:\s*["']switch["']/g) ?? []).length !== 1
   || !personaSettingsSource.includes('<dsh_im_persona>')
-  || (client.match(/role:\s*["']switch["']/g) ?? []).length !== 2
-  || (client.match(/type:\s*["']checkbox["']/g) ?? []).length !== 5) {
-  throw new Error('checkable inputs must be limited to context enhancement, Session sync, Delivery, and the off-peak toggle');
+  || (client.match(/role:\s*["']switch["']/g) ?? []).length !== 3
+  || (client.match(/type:\s*["']checkbox["']/g) ?? []).length !== 6) {
+  throw new Error('checkable inputs must be limited to context enhancement, Session sync, Delivery, off-peak, and the group brain toggles');
+}
+for (const marker of ['settings.group-brain.get', 'settings.group-brain.set', 'settings.group-brain.status', 'settings.group-brain.consolidate']) {
+  if (!host.includes(marker) || !client.includes(marker)) {
+    throw new Error(`group brain RPC endpoint missing from Host or Client bundle: ${marker}`);
+  }
 }
 for (const marker of ['settings.off-peak.get', 'settings.off-peak.set']) {
   if (!host.includes(marker) || !client.includes(marker)) {

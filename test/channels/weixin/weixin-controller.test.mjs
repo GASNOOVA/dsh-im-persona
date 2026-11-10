@@ -116,6 +116,7 @@ test('confirmed QR login stores bot_token only in credentials and starts a redac
   });
 
   const begun = await controller.startProvisioning();
+  assert.ok(begun.expiresAt - Date.now() > 29 * 60_000, '扫码绑定窗口应为 30 分钟');
   const completed = await waitFor(
     () => controller.registrationStatus(begun.attemptId),
     (value) => value.status === 'connected',
@@ -158,6 +159,41 @@ test('confirmed QR login stores bot_token only in credentials and starts a redac
   await controller.deleteBot(completed.botId);
   assert.equal(credentials.values.size, 0);
   assert.equal(configs.accounts.size, 0);
+  await controller.close();
+});
+
+test('expired server QR is refreshed while the local scan window remains open', async () => {
+  const credentials = credentialsFixture();
+  const configs = configFixture();
+  let begins = 0;
+  const controller = new WeixinController({
+    api: {
+      beginLogin: async () => {
+        begins += 1;
+        return { qrcode: `qr-${begins}`, qrcodeUrl: `https://liteapp.weixin.qq.com/q/test-${begins}` };
+      },
+      pollLogin: async ({ qrcode }) => {
+        if (qrcode === 'qr-1') return { status: 'expired' };
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return { status: 'wait' };
+      },
+    },
+    credentials: credentials.provider,
+    configStore: configs.store,
+    createRuntime: runtimeFactory().createRuntime,
+    logger: { error() {}, warn() {} },
+  });
+
+  const begun = await controller.startProvisioning();
+  assert.ok(begun.expiresAt - Date.now() > 29 * 60_000, '扫码绑定窗口应为 30 分钟');
+  const refreshed = await waitFor(
+    () => controller.registrationStatus(begun.attemptId),
+    (value) => value.status === 'pending' && value.verificationUrl?.endsWith('-2'),
+  );
+  assert.equal(begins, 2);
+  assert.equal(refreshed.status, 'pending');
+  assert.ok(refreshed.expiresAt - Date.now() > 29 * 60_000, '换码不应重置本地扫码窗口');
+  await controller.cancelProvisioning(begun.attemptId);
   await controller.close();
 });
 

@@ -32,6 +32,20 @@ test('general and attachment panels display translated management failures witho
               },
             };
           }
+          if (method === 'settings.group-brain.get') {
+            return {
+              ok: true,
+              value: {
+                enabled: true,
+                maxMembers: 5,
+                allowedGroups: [],
+                ambient: { enabled: true, silenceMs: 120000, minMessages: 2, cooldownMs: 600000, maxPerHour: 4, maxPerDay: 40 },
+                memory: { consolidateIntervalDays: 30, segmentGapMs: 600000, maxMemoryChars: 16000 },
+                profiles: { enabled: true, maxProfiles: 5 },
+              },
+            };
+          }
+          if (method === 'settings.group-brain.status') return { ok: true, value: { brains: [] } };
           try { return await callManagementRpc(connection, '/dsh-im-settings', method, payload, signal); }
           catch (error) { messages.push(dictionary?.[error.message] ?? error.message); throw error; }
         };
@@ -73,19 +87,34 @@ test('General tab configures sidebar and retention and retains Attachments navig
         },
       };
     }
+    if (endpoint === 'settings.group-brain.get') {
+      return {
+        ok: true,
+        value: {
+          enabled: true,
+          maxMembers: 5,
+          allowedGroups: [],
+          ambient: { enabled: true, silenceMs: 120000, minMessages: 2, cooldownMs: 600000, maxPerHour: 4, maxPerDay: 40 },
+          memory: { consolidateIntervalDays: 30, segmentGapMs: 600000, maxMemoryChars: 16000 },
+          profiles: { enabled: true, maxProfiles: 5 },
+        },
+      };
+    }
+    if (endpoint === 'settings.group-brain.status') return { ok: true, value: { brains: [] } };
     return { ok: false, error: { message: 'unexpected endpoint' } };
   };
   let renderer;
   await act(async () => { renderer = create(React.createElement(GlobalSettingsPanel, { rpcCall })); });
-  const input = () => renderer.root.findByProps({ type: 'number' });
+  const historyForm = () => renderer.root.findByProps({ 'aria-label': '群聊天记录' });
+  const input = () => historyForm().findByProps({ type: 'number' });
   assert.equal(input().props.value, '14');
-  assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 1);
+  assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 4);
   assert.equal(renderer.root.findAllByProps({ className: 'dim-groupHistoryList' }).length, 0);
-  assert.deepEqual(calls.map((call) => call.endpoint), ['settings.sidebar-entry.get', 'settings.group-history.get', 'settings.off-peak.get']);
+  assert.deepEqual(calls.map((call) => call.endpoint), ['settings.sidebar-entry.get', 'settings.group-history.get', 'settings.off-peak.get', 'settings.group-brain.get', 'settings.group-brain.status']);
   assert.equal(renderer.root.findAllByProps({ type: 'submit' }).length, 1,
     'only retention settings need a Save button');
   assert.equal(renderer.root.findByProps({ 'aria-label': '侧边栏入口' }).findAllByType('form').length, 0);
-  const form = () => renderer.root.findByProps({ 'aria-label': '群聊天记录' }).findByType('form');
+  const form = () => historyForm().findByType('form');
   await act(async () => { input().props.onChange({ target: { value: '0' } }); });
   await act(async () => { await form().props.onSubmit({ preventDefault() {} }); });
   assert.equal(calls.filter((call) => call.endpoint.endsWith('.set')).length, 0);

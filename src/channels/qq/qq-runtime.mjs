@@ -39,6 +39,7 @@ export class QqRuntime {
   #persona;
   #offPeak;
   #groupHistory;
+  #groupBrain;
   #accessPolicy;
   #logger;
   #diagnostics;
@@ -62,6 +63,7 @@ export class QqRuntime {
     persona,
     offPeak,
     groupHistory,
+    groupBrain = null,
     accessPolicy,
     logger = console,
     replyTimeoutMs = 600_000,
@@ -80,6 +82,7 @@ export class QqRuntime {
     this.#persona = persona;
     this.#offPeak = offPeak;
     this.#groupHistory = groupHistory;
+    this.#groupBrain = groupBrain;
     this.#accessPolicy = accessPolicy;
     this.#logger = logger; this.#diagnostics = createConnectionDiagnostics({ channel: 'qq', logger });
     this.#replyTimeoutMs = replyTimeoutMs;
@@ -214,6 +217,7 @@ export class QqRuntime {
       contextEnhancement: this.#contextEnhancement,
       persona: this.#persona,
       groupHistory: this.#groupHistory,
+      groupBrain: this.#groupBrain,
       accessPolicy: this.#accessPolicy,
       status: this.#status,
       logger: this.#logger,

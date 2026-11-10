@@ -47,8 +47,10 @@ async function fixture(t, options = {}) {
 // 内置人设（大肥鱼）
 // ---------------------------------------------------------------------------
 
-test('内置大肥鱼原样内置、冻结且不可删除/重命名', async (t) => {
-  assert.equal(PERSONA_PRESETS.length, 1);
+test('内置大肥鱼（私聊/群聊两版）原样内置、冻结且不可删除/重命名', async (t) => {
+  assert.equal(PERSONA_PRESETS.length, 2);
+  assert.deepEqual(PERSONA_PRESETS.map((preset) => preset.id), ['dafeiyu', 'dafeiyu-group']);
+
   const preset = PERSONA_PRESETS[0];
   assert.equal(preset.id, 'dafeiyu');
   assert.equal(preset.name, '大肥鱼');
@@ -60,6 +62,15 @@ test('内置大肥鱼原样内置、冻结且不可删除/重命名', async (t) 
   assert.equal(Object.isFrozen(preset), true);
   assert.equal(Object.isFrozen(PERSONA_PRESETS), true);
   assert.equal(personaPresetFor('dafeiyu'), preset);
+
+  // 群聊版是第二条独立 builtin：正文在私聊原文后追加群聊准则。
+  const groupPreset = PERSONA_PRESETS[1];
+  assert.equal(groupPreset.id, 'dafeiyu-group');
+  assert.equal(groupPreset.name, '大肥鱼（群聊版）');
+  assert.equal(groupPreset.source, 'builtin');
+  assert.equal(groupPreset.text.startsWith(BUNDLED_DAFEIYU), true);
+  assert.equal(groupPreset.text.length > BUNDLED_DAFEIYU.length, true);
+  assert.equal(personaPresetFor('dafeiyu-group'), groupPreset);
   assert.equal(personaPresetFor('nope'), null);
   assert.equal(personaPresetFor(null), null);
 
@@ -67,12 +78,14 @@ test('内置大肥鱼原样内置、冻结且不可删除/重命名', async (t) 
   const entry = library.entryFor('dafeiyu');
   assert.equal(entry.source, 'builtin');
   assert.equal(entry.text, BUNDLED_DAFEIYU);
+  assert.equal(library.entryFor('dafeiyu-group').text, groupPreset.text);
   await assert.rejects(library.remove('dafeiyu'), (error) => error.code === 'persona-library-readonly');
   await assert.rejects(library.rename('dafeiyu', '新名字'), (error) => error.code === 'persona-library-readonly');
-  // list 只返回元数据，不含正文。
+  await assert.rejects(library.remove('dafeiyu-group'), (error) => error.code === 'persona-library-readonly');
+  // list 只返回元数据，不含正文；顺序为 dafeiyu、dafeiyu-group。
   const listed = library.list();
-  assert.equal(listed.length, 1);
-  assert.equal(listed[0].id, 'dafeiyu');
+  assert.equal(listed.length, 2);
+  assert.deepEqual(listed.map((item) => item.id), ['dafeiyu', 'dafeiyu-group']);
   assert.equal(listed[0].readonly, true);
   assert.equal(Object.hasOwn(listed[0], 'text'), false);
   // get 才返回正文。
@@ -110,7 +123,7 @@ test('人设库导入/重命名/删除持久化，列表顺序与元数据稳定
   assert.equal(library.entryFor(first.id).text, '# 标题\n第一行正文');
   const second = await library.importEntry({ name: '第二个', text: '正文二' });
   assert.notEqual(second.id, first.id);
-  assert.deepEqual(library.list().map((entry) => entry.id), ['dafeiyu', first.id, second.id]);
+  assert.deepEqual(library.list().map((entry) => entry.id), ['dafeiyu', 'dafeiyu-group', first.id, second.id]);
 
   await library.rename(second.id, '改名后');
   assert.equal(library.entryFor(second.id).name, '改名后');
@@ -131,7 +144,7 @@ test('人设库导入/重命名/删除持久化，列表顺序与元数据稳定
 
   const reloaded = await new PersonaLibrary(path, { logger: { warn() {} } }).load();
   assert.equal(reloaded.entryFor(second.id).name, '改名后');
-  assert.equal(reloaded.list().length, 2);
+  assert.equal(reloaded.list().length, 3);
 });
 
 test('人设库对损坏文件与损坏记录 fail-soft，且加载不重写文件', async (t) => {
@@ -139,7 +152,7 @@ test('人设库对损坏文件与损坏记录 fail-soft，且加载不重写文�
   await mkdir(join(path, '..'), { recursive: true });
   await writeFile(path, '{ not json', 'utf8');
   const broken = await new PersonaLibrary(path, { logger: { warn() {} } }).load();
-  assert.equal(broken.list().length, 1, '只保留内置人设');
+  assert.equal(broken.list().length, 2, '只保留内置人设（私聊+群聊）');
   assert.equal(await readFile(path, 'utf8'), '{ not json');
 
   await writeFile(path, JSON.stringify({
@@ -195,7 +208,7 @@ test('config personaFile 作为只读 config 条目；缺失/相对路径 fail-s
   });
   await missing.load();
   assert.equal(missing.entryFor(PERSONA_CONFIG_PERSONA_ID), null);
-  assert.equal(missing.list().length, 1);
+  assert.equal(missing.list().length, 2);
   assert.ok(warnings.length > 0);
 
   const relative = new PersonaLibrary(join(root, 'lib-c.json'), {

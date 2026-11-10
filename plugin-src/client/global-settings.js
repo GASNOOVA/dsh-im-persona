@@ -2,6 +2,7 @@ import { DeliverySyncSettings } from './delivery-sync-settings.js';
 import { GroupHistorySettings } from './group-history-settings.js';
 import { SidebarSettings } from './sidebar-settings.js';
 import { OffPeakSettings } from './off-peak-settings.js';
+import { GroupBrainSettings } from './group-brain-settings.js';
 import * as React from 'react';
 
 import {
@@ -462,7 +463,7 @@ export function GlobalSettingsPanel({ rpcCall, deliverySyncRpcCall = null, langu
         className: 'dim-generalSettingsTabPanel',
         role: 'tabpanel',
         'aria-labelledby': 'dim-general-settings-tab-general',
-      }, h(SidebarSettings, { rpcCall }), h(GroupHistorySettings, { rpcCall }), h(OffPeakSettings, { rpcCall }));
+      }, h(SidebarSettings, { rpcCall }), h(GroupHistorySettings, { rpcCall }), h(OffPeakSettings, { rpcCall }), h(GroupBrainSettings, { rpcCall }));
   return h('section', { className: 'dim-generalSettingsPage', 'aria-label': '通用设置' },
     h('header', { className: 'dim-generalSettingsHeader' }, h('h2', null, '通用设置')),
     h('div', { className: 'dim-generalSettingsTabsBar' },

@@ -7,6 +7,7 @@ import { getGroupHistoryStore } from './group-history-runtime.mjs';
 import { createGroupHistoryRpcHandler, GROUP_HISTORY_ENDPOINTS } from './group-history-rpc.mjs';
 import { getOffPeakSettingsStore } from '../../src/channels/shared/off-peak-settings-store.mjs';
 import { createOffPeakRpcHandler, OFF_PEAK_ENDPOINTS } from './off-peak-rpc.mjs';
+import { createGroupBrainRpcHandler, GROUP_BRAIN_ENDPOINTS } from './group-brain-rpc.mjs';
 
 export const INBOUND_TTL_RPC_CHANNEL = '/dsh-im-settings';
 export const INBOUND_TTL_ENDPOINTS = Object.freeze({
@@ -83,11 +84,14 @@ export function installInboundTtlRpc(ctx, options = {}) {
   const image = createImageInputRpcHandler(getImageInputSettingsStore(options.config));
   const history = createGroupHistoryRpcHandler(options.groupHistory ?? getGroupHistoryStore(ctx, options.config));
   const offPeak = createOffPeakRpcHandler(getOffPeakSettingsStore(options.config));
+  const groupBrain = createGroupBrainRpcHandler({ config: options.config, logger: logger ?? console });
   return registerManagementRpc(ctx,
     INBOUND_TTL_RPC_CHANNEL,
-    (endpoint, payload, signal) => Object.values(OFF_PEAK_ENDPOINTS).includes(endpoint)
-      ? offPeak(endpoint, payload, signal)
-      : Object.values(GROUP_HISTORY_ENDPOINTS).includes(endpoint)
+    (endpoint, payload, signal) => Object.values(GROUP_BRAIN_ENDPOINTS).includes(endpoint)
+      ? groupBrain(endpoint, payload, signal)
+      : Object.values(OFF_PEAK_ENDPOINTS).includes(endpoint)
+        ? offPeak(endpoint, payload, signal)
+        : Object.values(GROUP_HISTORY_ENDPOINTS).includes(endpoint)
         ? history(endpoint, payload, signal) : Object.values(IMAGE_INPUT_ENDPOINTS).includes(endpoint)
           ? image(endpoint, payload, signal) : ttl(endpoint, payload, signal),
     { authority: options.config?.rpcAuthority },

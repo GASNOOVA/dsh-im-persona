@@ -3,6 +3,7 @@ import { getImageInputSettingsStore } from '../../../../src/channels/shared/imag
 import { getPersonaStore } from '../../../../src/channels/shared/persona-store.mjs';
 import { getPersonaLibrary } from '../../../../src/channels/shared/persona-library.mjs';
 import { resolvePersonaInjection } from '../../../../src/channels/shared/persona.mjs';
+import { resolveGroupPersonaAddon } from '../../../../src/channels/shared/persona-presets.mjs';
 import { getOffPeakSettingsStore } from '../../../../src/channels/shared/off-peak-settings-store.mjs';
 import { unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -24,6 +25,7 @@ import { prepareBotWorkspace } from '../../../../src/channels/shared/default-wor
 import { listAgentPresetCatalog } from '../../../../src/channels/shared/agent-preset.mjs';
 import { listModelCatalog } from '../../../../src/channels/shared/model-setting.mjs';
 import { createDeliveryAdapter } from '../../delivery-adapter.mjs';
+import { createHostGroupBrain, disposeHostGroupBrain } from '../../group-brain-runtime.mjs';
 import { createAnnouncedStateStore, createBindingAnnouncer } from '../shared/binding-events.mjs';
 import { createConnectionSupervisor } from './connection-supervisor.mjs';
 import { createHarnessCommandExecutor } from '../../harness-command-executor.mjs';
@@ -43,6 +45,7 @@ function pluginPaths(config) {
   const dshHome = resolve(config.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
   const root = resolve(config.dataDir ?? join(dshHome, 'integrations', 'dsh-qq'));
   return {
+    root,
     config: resolve(config.configPath ?? join(root, 'config.json')),
     bots: resolve(config.botsDir ?? join(root, 'bots')),
     workspaces: resolve(config.workspacesPath ?? join(root, 'workspaces.json')),
@@ -161,31 +164,74 @@ export async function createProductionController(ctx, config = {}, internals = {
         dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
       });
-      return new Runtime({
-        config: botConfig,
-        appSecret,
-        harness: workspaceScope.harness,
-        state: workspaceScope.state,
-        groupHistory: internals.groupHistory ?? getGroupHistoryStore(ctx, config),
-        contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
-        // 渠道只依赖「已解析人设」：task-4 的人设库解析只改这里与 store。
-        persona: { botId, getPersona: () => resolvePersonaInjection(personas.personaFor(botId), personaLibrary) },
-        // 闲时启用：同步判断当前是否应静默丢弃消息（高峰时段 + 开关开启）。
-        offPeak: { shouldBlock: (now = new Date()) => offPeakSettings.shouldBlockInbound(now) },
-        accessPolicy: accessPolicyProvider(workspaces, botId, {
-          channel: 'qq', config: botConfig,
-        }),
-        replyTimeoutMs: config.replyTimeoutMs ?? 600_000,
-        connectTimeoutMs: config.connectTimeoutMs ?? 20_000,
-        logger: {
-          error: (...args) => logger.error?.(`[${botId}]`, ...args),
-          warn: (...args) => logger.warn?.(`[${botId}]`, ...args),
-          info: (...args) => logger.info?.(`[${botId}]`, ...args),
-          debug: (...args) => logger.debug?.(`[${botId}]`, ...args),
-        },
-      });
+      // 群聊大脑：每机器人一个，未 @ 消息也进入记忆与触发引擎；接话/记忆整理
+      // 使用一次性 DSH 会话，回复走 QQ 群主动发送。
+      let runtimeRef = null;
+      // 群聊回复使用群聊版人设：选中「大肥鱼」时自动叠加群聊行为准则；
+      // 独立 builtin「大肥鱼（群聊版）」本身已含准则，不再重复叠加。
+      const resolveGroupPersona = () => {
+        const personaConfig = personas.personaFor(botId);
+        const resolved = resolvePersonaInjection(personaConfig, personaLibrary);
+        if (!resolved) return null;
+        const addon = personaConfig?.source === 'library' && personaConfig?.personaId === 'dafeiyu'
+          ? resolveGroupPersonaAddon('dafeiyu')
+          : '';
+        return addon ? { ...resolved, text: `${resolved.text}\n\n${addon}` } : resolved;
+      };
+      // 只有真正具备一次性会话能力的 Harness 才创建群聊大脑；测试用的极简
+      // Harness 桩没有 createSession/ask，此时安静跳过，不影响机器人本身。
+      const groupBrain = internals.groupBrain !== undefined
+        ? internals.groupBrain
+        : typeof workspaceScope.harness?.createSession === 'function'
+          && typeof workspaceScope.harness?.ask === 'function'
+          ? createHostGroupBrain({
+            channel: 'qq',
+            botId,
+            dshHome: config.dshHome ?? paths.root,
+            harness: workspaceScope.harness,
+            resolvePersona: resolveGroupPersona,
+            send: async ({ chatId, text }) => {
+              if (!runtimeRef) throw new Error('QQ runtime is not ready');
+              await runtimeRef.sendProactiveText({ kind: 'group', route: { groupOpenId: chatId } }, text);
+            },
+            logger,
+          })
+          : null;
+      if (groupBrain) await groupBrain.start?.();
+      try {
+        const runtime = new Runtime({
+          config: botConfig,
+          appSecret,
+          harness: workspaceScope.harness,
+          state: workspaceScope.state,
+          groupBrain,
+          groupHistory: internals.groupHistory ?? getGroupHistoryStore(ctx, config),
+          contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
+          // 渠道只依赖「已解析人设」：task-4 的人设库解析只改这里与 store。
+          persona: { botId, getPersona: () => resolvePersonaInjection(personas.personaFor(botId), personaLibrary) },
+          // 闲时启用：同步判断当前是否应静默丢弃消息（高峰时段 + 开关开启）。
+          offPeak: { shouldBlock: (now = new Date()) => offPeakSettings.shouldBlockInbound(now) },
+          accessPolicy: accessPolicyProvider(workspaces, botId, {
+            channel: 'qq', config: botConfig,
+          }),
+          replyTimeoutMs: config.replyTimeoutMs ?? 600_000,
+          connectTimeoutMs: config.connectTimeoutMs ?? 20_000,
+          logger: {
+            error: (...args) => logger.error?.(`[${botId}]`, ...args),
+            warn: (...args) => logger.warn?.(`[${botId}]`, ...args),
+            info: (...args) => logger.info?.(`[${botId}]`, ...args),
+            debug: (...args) => logger.debug?.(`[${botId}]`, ...args),
+          },
+        });
+        runtimeRef = runtime;
+        return runtime;
+      } catch (error) {
+        if (internals.groupBrain === undefined) disposeHostGroupBrain('qq', botId);
+        throw error;
+      }
     },
     deleteState: async ({ botId }) => {
+      disposeHostGroupBrain('qq', botId);
       const state = stateForSync(botId);
       forget(botId);
       if (state && typeof state.remove === 'function') {

@@ -235,6 +235,17 @@ async function fetchQqFileBuffer(url, { fetchImpl, signal }) {
 }
 
 /** Convert QQ's attachment metadata into lazily downloaded image references. */
+/** Append group-brain blocks after the user content; keeps leading blocks splittable. */
+function appendGroupBlocks(content, blocks) {
+  const text = (Array.isArray(blocks) ? blocks : [])
+    .filter((block) => typeof block === 'string' && block.trim())
+    .join('\n\n');
+  if (!text) return content;
+  if (typeof content === 'string') return content.trim() ? `${content}\n\n${text}` : text;
+  if (Array.isArray(content)) return [...content, { type: 'text', text }];
+  return content;
+}
+
 export function qqInboundMessage(message, { fetchImpl = fetch } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');
   const images = [];
@@ -483,6 +494,7 @@ export class QqHarnessBridge {
   #contextEnhancement;
   #persona;
   #groupHistory;
+  #groupBrain;
   #accessPolicy;
   #status;
   #logger;
@@ -513,6 +525,7 @@ export class QqHarnessBridge {
     contextEnhancement,
     persona,
     groupHistory,
+    groupBrain = null,
     accessPolicy,
     status = createQqBridgeStatus(),
     logger = console,
@@ -535,6 +548,7 @@ export class QqHarnessBridge {
     this.#contextEnhancement = contextEnhancement;
     this.#persona = persona;
     this.#groupHistory = groupHistory;
+    this.#groupBrain = groupBrain;
     this.#accessPolicy = accessPolicy;
     this.#status = status;
     this.#logger = logger;
@@ -558,17 +572,49 @@ export class QqHarnessBridge {
   }
 
   accept(message) {
-    if (!this.#groupHistory || message?.kind !== 'group') return this.#accept(message);
+    if (message?.kind !== 'group') return this.#accept(message);
+    if (!this.#groupBrain && !this.#groupHistory) return this.#accept(message);
+    return this.#observeGroupMessage(message).then(() => this.#accept(message));
+  }
+
+  /**
+   * Observe every delivered group message before it is routed: the group brain
+   * needs unaddressed chatter for its memory and for ambient triggers, and an
+   * addressed message gets its instruction/memory blocks attached here.
+   */
+  async #observeGroupMessage(message) {
+    if (this.#groupBrain) {
+      try {
+        const addressed = isQqMessageAddressed(message);
+        const observed = await this.#groupBrain.observe({
+          chatId: nonEmptyString(message.groupOpenid),
+          groupName: nonEmptyString(message.groupName) ?? '',
+          messageId: nonEmptyString(message.messageId),
+          senderId: nonEmptyString(message.senderId),
+          senderName: nonEmptyString(message.senderName),
+          text: nonEmptyString(message.raw?.content) ?? nonEmptyString(message.content) ?? '',
+          mentionedBot: addressed,
+          at: Number.isFinite(Date.parse(message.timestamp ?? '')) ? Date.parse(message.timestamp) : Date.now(),
+          kind: 'group',
+        });
+        if (Array.isArray(observed?.blocks) && observed.blocks.length > 0) {
+          message.groupBrainBlocks = observed.blocks;
+        }
+      } catch (error) {
+        this.#logger.warn?.('[dsh-im:qq] group brain observe failed:', error?.message ?? error);
+      }
+    }
+    if (!this.#groupHistory) return;
     const normalized = { ...qqInboundMessage(message, { fetchImpl: this.#fetchImpl }), kind: 'group',
       senderId: message.senderId, senderIsBot: message.senderIsBot, addressed: isQqMessageAddressed(message) };
-    return captureGroupHistory(this.#groupHistory, normalized, {
+    await captureGroupHistory(this.#groupHistory, normalized, {
       channel: 'qq', scope: `app:${this.#bot.appId}`, groupId: message.groupOpenid,
       messageId: message.messageId, sentAt: message.timestamp, senderName: message.senderName,
       text: message.raw?.content ?? message.content ?? '',
       type: message.attachments?.length ? 'file' : 'text',
       capability: '仅保存实际投递的消息；未 @ 能力及跨应用群身份尚需验证，当前按应用来源隔离。',
-    }, { logger: this.#logger })
-      .then(() => { message.groupHistory = normalized.groupHistory; return this.#accept(message); });
+    }, { logger: this.#logger });
+    message.groupHistory = normalized.groupHistory;
   }
 
   #accept(message) {
@@ -1356,6 +1402,13 @@ export class QqHarnessBridge {
       const persona = capturePersona(this.#persona);
       if (persona) {
         content = injectPersonaContent(content ?? text, persona);
+        contextEnhanced = true;
+      }
+      // Group brain blocks go last: the Host only splits leading known blocks,
+      // so appending keeps persona/source splitting intact while the model still
+      // reads the instruction/memory before the reply is produced.
+      if (Array.isArray(message.groupBrainBlocks) && message.groupBrainBlocks.length > 0) {
+        content = appendGroupBlocks(content ?? text, message.groupBrainBlocks);
         contextEnhanced = true;
       }
       // QQ stream_messages can acknowledge a final frame without rendering it in

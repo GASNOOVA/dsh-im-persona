@@ -22,7 +22,9 @@ const ACTIVE_ATTEMPT_STATES = new Set([
   'connecting',
 ]);
 const TERMINAL_ATTEMPT_STATES = new Set(['connected', 'expired', 'failed', 'cancelled']);
-const QR_TTL_MS = 5 * 60_000;
+// 个人版：扫码绑定窗口放宽到 30 分钟，避免临时离开误了 5 分钟有效期。
+// 服务端若更早判定二维码过期，轮询仍会以 expired 状态提前结束。
+const QR_TTL_MS = 30 * 60_000;
 function cleanString(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -458,6 +460,29 @@ export class WeixinController {
           record.error = safeAccountError('verification-blocked', t('配对码多次错误，请重新生成二维码。'));
           break;
         } else if (response.status === 'expired') {
+          // iLink 服务端二维码通常约 2 分钟过期；本地扫码窗口（个人版 30 分钟）内自动换一张，
+          // 避免用户因为没及时扫码而反复点“重新生成”。
+          if (Date.now() < record.expiresAt) {
+            let refreshed;
+            try {
+              refreshed = await this.#api.beginLogin({ localTokens: [], signal: record.controller.signal });
+            } catch (error) {
+              if (record.controller.signal.aborted || error?.name === 'AbortError') throw error;
+              this.#diagnostics.report(error, {
+                operation: 'provision.refresh', stage: 'qr.begin', warning: true,
+              });
+            }
+            this.#assertAttemptActive(record);
+            if (refreshed?.qrcode && refreshed?.qrcodeUrl) {
+              record.qrcode = refreshed.qrcode;
+              record.verificationUrl = refreshed.qrcodeUrl;
+              record.pendingVerifyCode = null;
+              record.state = 'pending';
+              record.error = null;
+              this.#touch();
+              continue;
+            }
+          }
           record.state = 'expired';
           record.error = safeAccountError('expired', t('二维码已过期，请重新生成。'));
           break;

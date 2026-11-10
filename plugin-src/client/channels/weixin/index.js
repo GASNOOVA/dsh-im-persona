@@ -99,7 +99,7 @@ function QrPanel({ provision, now, busy, onRefresh, onCancel }) {
   const href = safeVerificationUrl(provision.verificationUrl);
   const remaining = Math.max(0, provision.expiresAt - now);
   const expired = remaining === 0 || provision.status === 'expired';
-  const duration = Math.max(1, provision.durationMs ?? 5 * 60_000);
+  const duration = Math.max(1, provision.durationMs ?? 30 * 60_000);
   const progress = Math.round(Math.min(1, remaining / duration) * 100);
   React.useEffect(() => setImageFailed(false), [source]);
 
@@ -126,7 +126,7 @@ function QrPanel({ provision, now, busy, onRefresh, onCancel }) {
           h('span', { className: 'dxw-dot dim-stateDot', 'data-tone': provision.status === 'scanned' ? 'success' : 'warning' }),
           h('span', null, provision.status === 'scanned' ? '已扫码，请在手机上确认' : '等待微信扫码')),
         h('h3', null, expired ? '二维码已失效' : '使用手机微信扫描二维码'),
-        h('p', null, '请在手机上核对并确认授权。部分账号会额外显示一个配对数字，页面会在需要时提示输入。'),
+        h('p', null, '请在手机上核对并确认授权。部分账号会额外显示一个配对数字，页面会在需要时提示输入。二维码会在有效期内自动刷新，无需重新生成。'),
         h('ol', { className: 'dxw-steps dim-steps' },
           h('li', null, '打开手机微信并扫描左侧二维码'),
           h('li', null, '在微信中确认连接该机器人'),
@@ -354,7 +354,7 @@ export function mergeWeixinProvisioningSnapshot(
   return {
     ...current,
     ...incoming,
-    durationMs: current?.durationMs ?? 5 * 60_000,
+    durationMs: current?.durationMs ?? 30 * 60_000,
   };
 }
 
