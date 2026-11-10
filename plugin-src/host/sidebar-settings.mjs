@@ -44,9 +44,11 @@ export class SidebarSettingsStore {
   constructor(path) { this.#path = path; }
 
   async get() {
+    // Personal edition: the sidebar entry is part of the main interface, like
+    // the other personal plugins; keep it visible unless the user opts out.
     let raw;
     try { raw = await readFile(this.#path, 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') return 'auto'; throw error; }
+    catch (error) { if (error.code === 'ENOENT') return 'show'; throw error; }
     const value = JSON.parse(raw);
     if (value?.version !== 1 || !MODES.has(value.mode)) throw new Error('Invalid sidebar settings');
     return value.mode;

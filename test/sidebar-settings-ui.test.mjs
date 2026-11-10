@@ -79,6 +79,11 @@ test('failed configuration reads still allow forced modes and retain retry after
     t.after(() => rm(dshHome, { recursive: true, force: true }));
     await mkdir(join(dshHome, 'integrations/dsh-qq'), { recursive: true });
     await writeFile(join(dshHome, 'integrations/dsh-qq/config.json'), '{broken');
+    // The personal edition defaults to "show", which never reads channel
+    // configuration; pin "auto" so this case still exercises a broken read.
+    await mkdir(join(dshHome, 'integrations/dsh-im'), { recursive: true });
+    await writeFile(join(dshHome, 'integrations/dsh-im/sidebar-settings.json'),
+      `${JSON.stringify({ version: 1, mode: 'auto' })}\n`);
     const handler = createSidebarSettingsRpcHandler({ config: { dshHome } });
     let pending;
     const rpcCall = (...args) => (pending = handler(...args));

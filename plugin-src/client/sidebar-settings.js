@@ -113,7 +113,7 @@ export function SidebarSettings({ rpcCall }) {
           h('label', { className: 'dim-botGeneralTitle', htmlFor: id }, '侧边栏入口'),
           h('span', { role: 'status', className: 'dim-botGeneralHelp' },
             phase === 'loading' ? '正在读取侧边栏设置…' : phase === 'saving' ? '保存中…' : saved ? '已保存' : '')),
-        h('p', { className: 'dim-botGeneralHelp', id: `${id}-help` }, '自动模式：未配置渠道时显示，配置至少一个渠道后隐藏。隐藏后仍可从插件详情或设置进入，不影响机器人后台运行。')),
+        h('p', { className: 'dim-botGeneralHelp', id: `${id}-help` }, '个人版默认始终显示在左侧主界面。自动模式：未配置渠道时显示，配置至少一个渠道后隐藏；隐藏后仍可从插件详情或设置进入，不影响机器人后台运行。')),
       h('div', { className: 'dim-botGeneralControl' },
         h('select', { id, className: 'dim-sidebarSelect', value: mode, disabled, 'aria-describedby': `${id}-help`,
           onChange: (event) => save(event.target.value) },
