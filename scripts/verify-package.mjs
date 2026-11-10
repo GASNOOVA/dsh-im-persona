@@ -157,7 +157,14 @@ if (/role:\s*["']switch|type:\s*["']checkbox/.test(otherClientSources)
   || (client.match(/type:\s*["']checkbox["']/g) ?? []).length !== 6) {
   throw new Error('checkable inputs must be limited to context enhancement, Session sync, Delivery, off-peak, and the group brain toggles');
 }
-for (const marker of ['settings.group-brain.get', 'settings.group-brain.set', 'settings.group-brain.status', 'settings.group-brain.consolidate']) {
+for (const marker of [
+  'settings.group-brain.get',
+  'settings.group-brain.set',
+  'settings.group-brain.status',
+  'settings.group-brain.consolidate',
+  'settings.group-brain.wechat-personal.test',
+  'settings.group-brain.wechat-personal.personas',
+]) {
   if (!host.includes(marker) || !client.includes(marker)) {
     throw new Error(`group brain RPC endpoint missing from Host or Client bundle: ${marker}`);
   }

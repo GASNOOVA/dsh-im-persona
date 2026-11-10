@@ -59,7 +59,7 @@ test('general and attachment panels display translated management failures witho
           assert.ok(alerts.every(message => message === messages[0]));
           if (status === 403) assert.ok(alerts.every(message => message.includes('HTTP 403')));
           if (dictionary) assert.ok(alerts.every(message => !/[\u4e00-\u9fff]/.test(message)));
-          assert.deepEqual(calls.toSorted(), ['settings.group-history.get', 'settings.image-input.get', 'settings.inbound-ttl.get']);
+          assert.deepEqual(calls.toSorted(), ['settings.group-brain.wechat-personal.personas', 'settings.group-history.get', 'settings.image-input.get', 'settings.inbound-ttl.get']);
         } finally { if (renderer) await act(async () => renderer.unmount()); }
       }
     } finally { setImTranslator(undefined); }
@@ -108,9 +108,9 @@ test('General tab configures sidebar and retention and retains Attachments navig
   const historyForm = () => renderer.root.findByProps({ 'aria-label': '群聊天记录' });
   const input = () => historyForm().findByProps({ type: 'number' });
   assert.equal(input().props.value, '14');
-  assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 4);
+  assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 5);
   assert.equal(renderer.root.findAllByProps({ className: 'dim-groupHistoryList' }).length, 0);
-  assert.deepEqual(calls.map((call) => call.endpoint), ['settings.sidebar-entry.get', 'settings.group-history.get', 'settings.off-peak.get', 'settings.group-brain.get', 'settings.group-brain.status']);
+  assert.deepEqual(calls.map((call) => call.endpoint), ['settings.sidebar-entry.get', 'settings.group-history.get', 'settings.off-peak.get', 'settings.group-brain.get', 'settings.group-brain.status', 'settings.group-brain.wechat-personal.personas']);
   assert.equal(renderer.root.findAllByProps({ type: 'submit' }).length, 1,
     'only retention settings need a Save button');
   assert.equal(renderer.root.findByProps({ 'aria-label': '侧边栏入口' }).findAllByType('form').length, 0);

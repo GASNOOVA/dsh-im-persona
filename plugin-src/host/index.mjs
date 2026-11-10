@@ -19,6 +19,7 @@ import { getDeliverySyncSettingsStore } from '../../src/channels/shared/delivery
 import { installSessionTitlePrefix } from './session-title-prefix.mjs';
 import { installChannelListRpc } from './channel-list-rpc.mjs';
 import { installPersonaRpc } from './persona-rpc.mjs';
+import { installWechatPersonalRuntime } from './wechat-personal-runtime.mjs';
 
 export const name = 'dsh-im-persona-host';
 export const inject = [
@@ -51,6 +52,7 @@ export function createImHostPlugin(internals = {}) {
   const startSidebarSettings = internals.installSidebarSettingsRpc ?? installSidebarSettingsRpc;
   const startInjectedContext = internals.installInjectedContext ?? installInjectedContext;
   const startPersonaRpc = internals.installPersonaRpc ?? installPersonaRpc;
+  const startWechatPersonal = internals.installWechatPersonalRuntime ?? installWechatPersonalRuntime;
   const startDelivery = internals.installDeliveryRpc ?? installDeliveryRpc;
   const startDeliveryHttp = internals.installDeliveryHttp ?? installDeliveryHttp;
   const startSessionSync = internals.installSessionSyncCoordinator
@@ -230,6 +232,12 @@ export function createImHostPlugin(internals = {}) {
     }));
     if (failures.length === channels.length) {
       throw new AggregateError(failures, 'dsh-im failed to activate every channel');
+    }
+    // 微信个人号是群聊大脑的输入源，不占用独立渠道；未启用时这里只是读取设置并返回。
+    try {
+      await startWechatPersonal(ctx, { config });
+    } catch (error) {
+      logger.error?.('[dsh-im] failed to activate WeChat personal runtime; continuing', error);
     }
     if (typeof ctx?.on === 'function') {
       try {

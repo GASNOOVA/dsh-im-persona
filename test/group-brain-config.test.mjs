@@ -3,11 +3,13 @@ import test from 'node:test';
 
 import {
   DEFAULT_GROUP_BRAIN_SETTINGS,
+  DEFAULT_WECHAT_PERSONAL_SETTINGS,
   GROUP_BRAIN_LIMITS,
   groupBrainRoot,
   isGroupAllowed,
   normalizeAllowedGroup,
   normalizeGroupBrainSettings,
+  normalizeWechatPersonalSettings,
 } from '../src/channels/shared/group-brain/group-brain-config.mjs';
 
 test('group brain settings normalize unknown input to conservative defaults', () => {
@@ -23,6 +25,13 @@ test('group brain settings normalize unknown input to conservative defaults', ()
     ambient: { enabled: true, silenceMs: 5, minMessages: 0, cooldownMs: -1, maxPerHour: 999, maxPerDay: 2 },
     memory: { consolidateIntervalDays: 30, segmentGapMs: 1, maxMemoryChars: 64_000 },
     profiles: { enabled: false, maxProfiles: 99 },
+    wechatPersonal: {
+      enabled: 'yes',
+      daemonUrl: 'ftp://nope',
+      tokenPath: 42,
+      accountId: 'bad id!',
+      personaId: '',
+    },
   });
   assert.equal(settings.enabled, DEFAULT_GROUP_BRAIN_SETTINGS.enabled);
   assert.equal(settings.maxMembers, DEFAULT_GROUP_BRAIN_SETTINGS.maxMembers);
@@ -36,6 +45,11 @@ test('group brain settings normalize unknown input to conservative defaults', ()
   assert.equal(settings.memory.segmentGapMs, DEFAULT_GROUP_BRAIN_SETTINGS.memory.segmentGapMs);
   assert.equal(settings.profiles.enabled, false);
   assert.equal(settings.profiles.maxProfiles, DEFAULT_GROUP_BRAIN_SETTINGS.profiles.maxProfiles);
+  assert.equal(settings.wechatPersonal.enabled, DEFAULT_WECHAT_PERSONAL_SETTINGS.enabled);
+  assert.equal(settings.wechatPersonal.daemonUrl, DEFAULT_WECHAT_PERSONAL_SETTINGS.daemonUrl);
+  assert.equal(settings.wechatPersonal.tokenPath, '');
+  assert.equal(settings.wechatPersonal.accountId, '');
+  assert.equal(settings.wechatPersonal.personaId, DEFAULT_WECHAT_PERSONAL_SETTINGS.personaId);
 });
 
 test('group brain settings reject non-record input and normalize group entries', () => {
@@ -60,4 +74,30 @@ test('group allowlist matches channel, bot and chat exactly', () => {
 test('group brain root lives next to the other dsh-im state', () => {
   assert.equal(groupBrainRoot('/home/user/.dsh'), '/home/user/.dsh/integrations/dsh-im/group-brain');
   assert.equal(groupBrainRoot(undefined).endsWith('/integrations/dsh-im/group-brain'), true);
+});
+
+test('wechat personal settings validate daemon url, account id and persona', () => {
+  const defaults = normalizeWechatPersonalSettings(undefined);
+  assert.deepEqual(defaults, DEFAULT_WECHAT_PERSONAL_SETTINGS);
+
+  const settings = normalizeWechatPersonalSettings({
+    enabled: true,
+    daemonUrl: 'http://127.0.0.1:16174/',
+    tokenPath: '/mnt/volume/dsh/.im/agent-wechat/aw-data/api-token',
+    accountId: 'xiaohao',
+    personaId: 'dafeiyu-group',
+  });
+  assert.equal(settings.enabled, true);
+  assert.equal(settings.daemonUrl, 'http://127.0.0.1:16174');
+  assert.equal(settings.tokenPath, '/mnt/volume/dsh/.im/agent-wechat/aw-data/api-token');
+  assert.equal(settings.accountId, 'xiaohao');
+  assert.equal(settings.personaId, 'dafeiyu-group');
+
+  const badAccount = normalizeWechatPersonalSettings({ accountId: 'bad id!', daemonUrl: 'not a url' });
+  assert.equal(badAccount.accountId, '');
+  assert.equal(badAccount.daemonUrl, DEFAULT_WECHAT_PERSONAL_SETTINGS.daemonUrl);
+  assert.equal(badAccount.personaId, 'dafeiyu-group');
+
+  const merged = normalizeGroupBrainSettings({ wechatPersonal: settings });
+  assert.equal(merged.wechatPersonal.accountId, 'xiaohao');
 });

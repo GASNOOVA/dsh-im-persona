@@ -19,6 +19,13 @@ const DEFAULT_SETTINGS = {
   },
   memory: { consolidateIntervalDays: 30, segmentGapMs: 600_000, maxMemoryChars: 16_000 },
   profiles: { enabled: true, maxProfiles: 5 },
+  wechatPersonal: {
+    enabled: false,
+    daemonUrl: 'http://127.0.0.1:16174',
+    tokenPath: '',
+    accountId: '',
+    personaId: 'dafeiyu-group',
+  },
 };
 
 function switchInputs(renderer) {
@@ -40,6 +47,9 @@ test('group brain settings load, toggle and save through RPC', async (t) => {
     }
     if (endpoint === GROUP_BRAIN_ENDPOINTS.set) { saved = payload; return { ok: true, value: payload }; }
     if (endpoint === GROUP_BRAIN_ENDPOINTS.consolidate) return { ok: true, value: {} };
+    if (endpoint === GROUP_BRAIN_ENDPOINTS.wechatPersonalPersonas) {
+      return { ok: true, value: { personas: [{ id: 'dafeiyu-group', name: '大肥鱼（群聊版）' }] } };
+    }
     throw new Error(`unexpected endpoint ${endpoint}`);
   };
   let renderer;
@@ -48,7 +58,7 @@ test('group brain settings load, toggle and save through RPC', async (t) => {
   await flush();
 
   const switches = switchInputs(renderer);
-  assert.equal(switches.length, 3);
+  assert.equal(switches.length, 4);
   assert.equal(switches[0].props.checked, true);
 
   await act(async () => { switches[0].props.onChange({ target: { checked: false } }); });
@@ -62,6 +72,7 @@ test('group brain settings load, toggle and save through RPC', async (t) => {
   assert.ok(setCall, 'settings.set was called');
   assert.equal(setCall[1].enabled, false);
   assert.equal(setCall[1].ambient.enabled, true);
+  assert.equal(setCall[1].wechatPersonal.enabled, false);
 });
 
 test('group brain settings show a retry path when loading fails', async (t) => {
@@ -85,5 +96,5 @@ test('group brain settings show a retry path when loading fails', async (t) => {
   assert.ok(retryButton, 'retry button is rendered');
   await act(async () => { retryButton.props.onClick(); });
   await flush();
-  assert.equal(switchInputs(renderer).length, 3);
+  assert.equal(switchInputs(renderer).length, 4);
 });

@@ -13,6 +13,10 @@ import {
   listHostGroupBrains,
   reloadHostGroupBrains,
 } from './group-brain-runtime.mjs';
+import {
+  getWechatPersonalManager,
+  listWechatPersonalPersonaChoices,
+} from './wechat-personal-runtime.mjs';
 
 export const GROUP_BRAIN_RPC_CHANNEL = '/dsh-im-settings';
 
@@ -21,9 +25,11 @@ export const GROUP_BRAIN_ENDPOINTS = Object.freeze({
   set: 'settings.group-brain.set',
   status: 'settings.group-brain.status',
   consolidate: 'settings.group-brain.consolidate',
+  testWechatPersonal: 'settings.group-brain.wechat-personal.test',
+  wechatPersonalPersonas: 'settings.group-brain.wechat-personal.personas',
 });
 
-const SET_KEYS = new Set(['enabled', 'maxMembers', 'allowedGroups', 'ambient', 'memory', 'profiles']);
+const SET_KEYS = new Set(['enabled', 'maxMembers', 'allowedGroups', 'ambient', 'memory', 'profiles', 'wechatPersonal']);
 
 function isPlainRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -31,6 +37,15 @@ function isPlainRecord(value) {
 
 function badRequest(message) {
   return { ok: false, error: { code: 'bad-request', message } };
+}
+
+async function safeWechatPersonalStatus(manager) {
+  if (!manager) return null;
+  try {
+    return await manager.status();
+  } catch (error) {
+    return { error: error?.message ?? String(error) };
+  }
 }
 
 function safeStatus(brain) {
@@ -59,8 +74,10 @@ export function createGroupBrainRpcHandler({
   store = null,
   listBrains = listHostGroupBrains,
   reloadBrains = reloadHostGroupBrains,
+  wechatPersonalManager = null,
 } = {}) {
   const settingsStore = store ?? getGroupBrainSettingsStore(config);
+  const manager = () => wechatPersonalManager ?? getWechatPersonalManager();
   return async function groupBrainRpc(endpoint, payload, signal) {
     if (signal?.aborted) {
       return { ok: false, error: { code: 'cancelled', message: 'Request cancelled.' } };
@@ -81,6 +98,9 @@ export function createGroupBrainRpcHandler({
         await reloadBrains().catch((error) => {
           logger?.warn?.('[dsh-im] group brain reload failed:', error?.message ?? error);
         });
+        await manager()?.reload?.().catch((error) => {
+          logger?.warn?.('[dsh-im] wechat personal reload failed:', error?.message ?? error);
+        });
         return { ok: true, value: saved };
       }
       if (endpoint === GROUP_BRAIN_ENDPOINTS.status) {
@@ -95,6 +115,7 @@ export function createGroupBrainRpcHandler({
               botId: brain?.botId,
               status: safeStatus(brain),
             })),
+            wechatPersonal: await safeWechatPersonalStatus(manager()),
           },
         };
       }
@@ -119,6 +140,24 @@ export function createGroupBrainRpcHandler({
           results.push({ channel: brain.channel, botId: brain.botId, result: await brain.maybeConsolidateAll({ force: true }) });
         }
         return { ok: true, value: { results } };
+      }
+      if (endpoint === GROUP_BRAIN_ENDPOINTS.testWechatPersonal) {
+        if (isPlainRecord(payload) && Object.keys(payload).length > 0) return badRequest('Invalid group brain request.');
+        const active = manager();
+        if (!active) {
+          return { ok: false, error: { code: 'wechat-personal-unavailable', message: '微信个人号尚未启用。' } };
+        }
+        const result = await active.test();
+        if (result?.ok === false) {
+          return { ok: false, error: { code: 'wechat-personal-unavailable', message: result.error ?? '微信个人号连接测试失败。' } };
+        }
+        return { ok: true, value: result };
+      }
+      if (endpoint === GROUP_BRAIN_ENDPOINTS.wechatPersonalPersonas) {
+        if (isPlainRecord(payload) && Object.keys(payload).length > 0) return badRequest('Invalid group brain request.');
+        const active = manager();
+        const personas = active ? await active.listPersonas() : await listWechatPersonalPersonaChoices(config);
+        return { ok: true, value: { personas } };
       }
       return badRequest('Unknown group brain endpoint.');
     } catch (error) {

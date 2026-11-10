@@ -7,6 +7,8 @@ export const GROUP_BRAIN_ENDPOINTS = Object.freeze({
   set: 'settings.group-brain.set',
   status: 'settings.group-brain.status',
   consolidate: 'settings.group-brain.consolidate',
+  testWechatPersonal: 'settings.group-brain.wechat-personal.test',
+  wechatPersonalPersonas: 'settings.group-brain.wechat-personal.personas',
 });
 
 const DEFAULT_BRAIN_TEMPLATE = Object.freeze({
@@ -16,6 +18,13 @@ const DEFAULT_BRAIN_TEMPLATE = Object.freeze({
   ambient: { enabled: true, silenceMs: 120_000, minMessages: 2, cooldownMs: 600_000, maxPerHour: 4, maxPerDay: 40 },
   memory: { consolidateIntervalDays: 30, segmentGapMs: 600_000, maxMemoryChars: 16_000 },
   profiles: { enabled: true, maxProfiles: 5 },
+  wechatPersonal: {
+    enabled: false,
+    daemonUrl: 'http://127.0.0.1:16174',
+    tokenPath: '',
+    accountId: '',
+    personaId: 'dafeiyu-group',
+  },
 });
 
 function unwrap(result, fallbackMessage) {
@@ -28,6 +37,7 @@ function normalizeSettings(value) {
   const ambient = value.ambient ?? DEFAULT_BRAIN_TEMPLATE.ambient;
   const memory = value.memory ?? DEFAULT_BRAIN_TEMPLATE.memory;
   const profiles = value.profiles ?? DEFAULT_BRAIN_TEMPLATE.profiles;
+  const wechatPersonal = value.wechatPersonal ?? DEFAULT_BRAIN_TEMPLATE.wechatPersonal;
   return {
     enabled: value.enabled === true,
     maxMembers: Number.isInteger(value.maxMembers) ? value.maxMembers : DEFAULT_BRAIN_TEMPLATE.maxMembers,
@@ -48,6 +58,15 @@ function normalizeSettings(value) {
     profiles: {
       enabled: profiles.enabled === true,
       maxProfiles: profiles.maxProfiles ?? DEFAULT_BRAIN_TEMPLATE.profiles.maxProfiles,
+    },
+    wechatPersonal: {
+      enabled: wechatPersonal.enabled === true,
+      daemonUrl: typeof wechatPersonal.daemonUrl === 'string' && wechatPersonal.daemonUrl
+        ? wechatPersonal.daemonUrl : DEFAULT_BRAIN_TEMPLATE.wechatPersonal.daemonUrl,
+      tokenPath: typeof wechatPersonal.tokenPath === 'string' ? wechatPersonal.tokenPath : '',
+      accountId: typeof wechatPersonal.accountId === 'string' ? wechatPersonal.accountId : '',
+      personaId: typeof wechatPersonal.personaId === 'string' && wechatPersonal.personaId
+        ? wechatPersonal.personaId : DEFAULT_BRAIN_TEMPLATE.wechatPersonal.personaId,
     },
   };
 }
@@ -95,6 +114,21 @@ function NumberField({ id, label, help, value, min, max, step = 1, unit, onChang
     help ? h('span', { className: 'dim-botGeneralHelp' }, help) : null);
 }
 
+function TextField({ id, label, help, value, placeholder, disabled, onChange }) {
+  return h('label', { className: 'dim-botGeneralField', htmlFor: id },
+    h('span', { className: 'dim-botGeneralTitle' }, label),
+    h('input', {
+      id,
+      type: 'text',
+      className: 'dim-textInput',
+      value: String(value ?? ''),
+      placeholder,
+      disabled,
+      onChange: (event) => onChange(event.target.value),
+    }),
+    help ? h('span', { className: 'dim-botGeneralHelp' }, help) : null);
+}
+
 function SwitchRow({ id, label, help, checked, disabled, onChange }) {
   return h('div', { className: 'dim-botGeneralRow' },
     h('div', { className: 'dim-botGeneralText' },
@@ -139,6 +173,9 @@ export function GroupBrainSettings({ rpcCall }) {
   const [error, setError] = React.useState(null);
   const [saved, setSaved] = React.useState(false);
   const [notice, setNotice] = React.useState('');
+  const [personas, setPersonas] = React.useState(null);
+  const [testing, setTesting] = React.useState(false);
+  const [testNotice, setTestNotice] = React.useState('');
   const mounted = React.useRef(false);
   const busy = React.useRef(false);
   const id = React.useId();
@@ -153,6 +190,10 @@ export function GroupBrainSettings({ rpcCall }) {
       ]);
       if (signal?.aborted || !mounted.current) return;
       setSettings(nextSettings); setDraft(nextSettings); setStatus(nextStatus); setPhase('ready');
+      try {
+        const choices = unwrap(await rpcCall(GROUP_BRAIN_ENDPOINTS.wechatPersonalPersonas, {}), '无法读取人设列表。');
+        if (mounted.current) setPersonas(Array.isArray(choices?.personas) ? choices.personas : []);
+      } catch { /* 人设列表失败不阻塞主设置。 */ }
     } catch (caught) {
       if (signal?.aborted || !mounted.current) return;
       setError(caught.message); setPhase('error');
@@ -179,6 +220,7 @@ export function GroupBrainSettings({ rpcCall }) {
         ambient: draft.ambient,
         memory: draft.memory,
         profiles: draft.profiles,
+        wechatPersonal: draft.wechatPersonal,
       });
       const next = normalizeSettings(unwrap(result, '无法保存群聊大脑设置，请稍后重试。'));
       if (mounted.current) { setSettings(next); setDraft(next); setSaved(true); setPhase('ready'); }
@@ -208,6 +250,31 @@ export function GroupBrainSettings({ rpcCall }) {
       if (mounted.current) setError(caught.message);
     }
   };
+
+  const testWechatPersonal = async () => {
+    if (disabled || testing) return;
+    setTesting(true); setTestNotice(''); setError(null);
+    try {
+      const result = unwrap(await rpcCall(GROUP_BRAIN_ENDPOINTS.testWechatPersonal, {}), '微信个人号连接测试失败。');
+      if (mounted.current) {
+        const account = result?.account ?? {};
+        setTestNotice(account.authenticated
+          ? localizeTemplate('daemon 正常，已登录 {user}（{connection}），可见会话 {threads} 个。', {
+            user: account.ownUsername || account.id || '',
+            connection: account.connection || '未知连接',
+            threads: result.threads ?? 0,
+          })
+          : 'daemon 可达，但微信个人号尚未登录，请先在 agent-wechat 扫码。');
+        await refreshStatus();
+      }
+    } catch (caught) {
+      if (mounted.current) setError(caught.message);
+    } finally {
+      if (mounted.current) setTesting(false);
+    }
+  };
+
+  const patchWechat = (update) => setDraft((current) => (current ? { ...current, wechatPersonal: { ...current.wechatPersonal, ...update } } : current));
 
   const dirty = Boolean(settings && draft && JSON.stringify(settings) !== JSON.stringify(draft));
   const groups = groupCounts(status);
@@ -293,6 +360,62 @@ export function GroupBrainSettings({ rpcCall }) {
           help: '每个群最多保留的成员画像数量。', disabled,
           onChange: (value) => patch({ profiles: { ...draft.profiles, maxProfiles: value } }),
         })),
+
+      h('fieldset', { className: 'dim-botGeneralFieldset' },
+        h('legend', { className: 'dim-botGeneralTitle' }, '微信个人号（agent-wechat）'),
+        h('p', { className: 'dim-botGeneralHelp' },
+          '通过本机的 agent-wechat daemon 接入你自己的微信小号，让群聊大脑读取真实微信群消息并参与聊天。@ 消息会直接回复；未 @ 消息进入记忆与自动接话判断。人设与聊天记忆都使用本面板的设置。'),
+        h(SwitchRow, {
+          id: `${id}-wechat-personal`, label: '启用微信个人号接入', checked: draft.wechatPersonal.enabled, disabled: disabled || !draft.enabled,
+          help: '需要本机 agent-wechat daemon 已启动，且微信小号已扫码登录。',
+          onChange: (value) => patchWechat({ enabled: value }),
+        }),
+        h('div', { className: 'dim-botGeneralGrid' },
+          h(TextField, {
+            id: `${id}-wechat-url`, label: 'daemon 地址', value: draft.wechatPersonal.daemonUrl,
+            placeholder: 'http://127.0.0.1:16174', disabled: disabled || !draft.wechatPersonal.enabled,
+            help: 'agent-wechat serve 的监听地址。',
+            onChange: (value) => patchWechat({ daemonUrl: value }),
+          }),
+          h(TextField, {
+            id: `${id}-wechat-account`, label: '账号 ID', value: draft.wechatPersonal.accountId,
+            placeholder: 'xiaohao', disabled: disabled || !draft.wechatPersonal.enabled,
+            help: 'wx accounts create 时使用的账号 ID。',
+            onChange: (value) => patchWechat({ accountId: value.trim() }),
+          })),
+        h(TextField, {
+          id: `${id}-wechat-token`, label: 'token 文件路径', value: draft.wechatPersonal.tokenPath,
+          placeholder: '/path/to/agent-wechat/aw-data/api-token', disabled: disabled || !draft.wechatPersonal.enabled,
+          help: 'daemon 数据目录下的 api-token 文件；插件只读取、不写入。',
+          onChange: (value) => patchWechat({ tokenPath: value.trim() }),
+        }),
+        h('label', { className: 'dim-botGeneralField', htmlFor: `${id}-wechat-persona` },
+          h('span', { className: 'dim-botGeneralTitle' }, '群聊人设'),
+          h('select', {
+            id: `${id}-wechat-persona`,
+            className: 'dim-textInput',
+            value: draft.wechatPersonal.personaId,
+            disabled: disabled || !draft.wechatPersonal.enabled,
+            onChange: (event) => patchWechat({ personaId: event.target.value }),
+          },
+          (Array.isArray(personas) && personas.length > 0 ? personas : [{ id: 'dafeiyu-group', name: '大肥鱼（群聊版）' }])
+            .map((persona) => h('option', { key: persona.id, value: persona.id }, persona.name || persona.id))),
+          h('span', { className: 'dim-botGeneralHelp' }, '默认使用「大肥鱼（群聊版）」；也可以选择人设库里的其它条目。')),
+        h('div', { className: 'dim-botGeneralActions' },
+          h('button', { type: 'button', className: 'dim-deliveryButton', disabled: disabled || testing, onClick: testWechatPersonal },
+            testing ? '正在测试…' : '测试 daemon 连接')),
+        testNotice ? h('p', { role: 'status', className: 'dim-botGeneralHelp' }, testNotice) : null,
+        status?.wechatPersonal
+          ? h('p', { className: 'dim-botGeneralHelp' },
+            status.wechatPersonal.running
+              ? localizeTemplate('运行中：{user}（{groups} 个群）', {
+                user: status.wechatPersonal.account?.ownUserId ?? '',
+                groups: status.wechatPersonal.runtime?.groups?.length ?? 0,
+              })
+              : status.wechatPersonal.lastError
+                ? localizeTemplate('未运行：{error}', { error: status.wechatPersonal.lastError })
+                : '未运行')
+          : null),
 
       h('fieldset', { className: 'dim-botGeneralFieldset' },
         h('legend', { className: 'dim-botGeneralTitle' }, '长期记忆'),

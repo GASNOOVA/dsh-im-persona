@@ -40,7 +40,18 @@ export const DEFAULT_GROUP_BRAIN_SETTINGS = Object.freeze({
     enabled: true,
     maxProfiles: 5,
   }),
+  // 微信个人号（agent-wechat daemon）群聊接入：仅此一个账号，用于真实微信群主动参与。
+  wechatPersonal: Object.freeze({
+    enabled: false,
+    daemonUrl: 'http://127.0.0.1:16174',
+    tokenPath: '',
+    accountId: '',
+    personaId: 'dafeiyu-group',
+  }),
 });
+
+/** 微信个人号接入的默认值。 */
+export const DEFAULT_WECHAT_PERSONAL_SETTINGS = DEFAULT_GROUP_BRAIN_SETTINGS.wechatPersonal;
 
 /** 配置字段的合法范围（闭区间，整数）。 */
 export const GROUP_BRAIN_LIMITS = Object.freeze({
@@ -87,6 +98,35 @@ export function normalizeAllowedGroup(value) {
   if (!channel || !botId || !chatId) return null;
   const groupName = normalizeText(value.groupName, 120);
   return Object.freeze({ channel, botId, chatId, groupName });
+}
+
+/** 校验并归一化以太网地址：只接受 http/https，去尾斜杠；非法值回退默认。 */
+function normalizeWechatPersonalDaemonUrl(value) {
+  const text = normalizeText(value, 500);
+  if (!text) return DEFAULT_WECHAT_PERSONAL_SETTINGS.daemonUrl;
+  try {
+    const url = new URL(text);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return DEFAULT_WECHAT_PERSONAL_SETTINGS.daemonUrl;
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return DEFAULT_WECHAT_PERSONAL_SETTINGS.daemonUrl;
+  }
+}
+
+/** 归一化微信个人号接入配置。 */
+export function normalizeWechatPersonalSettings(value) {
+  const defaults = DEFAULT_WECHAT_PERSONAL_SETTINGS;
+  if (!isPlainRecord(value)) return defaults;
+  const accountId = normalizeText(value.accountId, 64);
+  const tokenPath = normalizeText(value.tokenPath, 1000);
+  const personaId = normalizeText(value.personaId, 128);
+  return Object.freeze({
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
+    daemonUrl: normalizeWechatPersonalDaemonUrl(value.daemonUrl),
+    tokenPath,
+    accountId: /^[A-Za-z0-9_-]{1,64}$/.test(accountId) ? accountId : '',
+    personaId: /^[A-Za-z0-9_.:-]{1,128}$/.test(personaId) ? personaId : defaults.personaId,
+  });
 }
 
 /**
@@ -142,6 +182,7 @@ export function normalizeGroupBrainSettings(value) {
       enabled: typeof profiles.enabled === 'boolean' ? profiles.enabled : defaults.profiles.enabled,
       maxProfiles: readInteger(profiles.maxProfiles, defaults.profiles.maxProfiles, GROUP_BRAIN_LIMITS.maxProfiles),
     }),
+    wechatPersonal: normalizeWechatPersonalSettings(value.wechatPersonal),
   });
 }
 

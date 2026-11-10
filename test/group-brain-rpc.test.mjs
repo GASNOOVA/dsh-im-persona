@@ -103,3 +103,64 @@ test('group brain RPC reports a missing brain instead of throwing', async () => 
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 'unknown-brain');
 });
+
+function fakeWechatManager() {
+  const calls = { reload: 0, test: 0, personas: 0 };
+  return {
+    calls,
+    status: async () => ({ configured: true, running: true, account: { id: 'xiaohao' } }),
+    reload: async () => { calls.reload += 1; },
+    test: async () => { calls.test += 1; return { ok: true, daemon: { baseUrl: 'http://127.0.0.1:16174', health: { status: 'ok' } }, account: { id: 'xiaohao' } }; },
+    listPersonas: async () => { calls.personas += 1; return [{ id: 'dafeiyu-group', name: '大肥鱼（群聊版）' }]; },
+  };
+}
+
+test('group brain RPC persists wechat personal settings and reloads the bridge', async () => {
+  const store = fakeStore();
+  const manager = fakeWechatManager();
+  let reloads = 0;
+  const handler = createGroupBrainRpcHandler({
+    store,
+    listBrains: () => [],
+    reloadBrains: async () => { reloads += 1; },
+    wechatPersonalManager: manager,
+  });
+  const saved = await handler(GROUP_BRAIN_ENDPOINTS.set, {
+    wechatPersonal: {
+      enabled: true,
+      daemonUrl: 'http://127.0.0.1:16174/',
+      tokenPath: '/tmp/api-token',
+      accountId: 'xiaohao',
+      personaId: 'dafeiyu-group',
+    },
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.value.wechatPersonal.enabled, true);
+  assert.equal(saved.value.wechatPersonal.daemonUrl, 'http://127.0.0.1:16174');
+  assert.equal(reloads, 1);
+  assert.equal(manager.calls.reload, 1);
+
+  const status = await handler(GROUP_BRAIN_ENDPOINTS.status, {});
+  assert.equal(status.ok, true);
+  assert.deepEqual(status.value.wechatPersonal, { configured: true, running: true, account: { id: 'xiaohao' } });
+
+  const tested = await handler(GROUP_BRAIN_ENDPOINTS.testWechatPersonal, {});
+  assert.equal(tested.ok, true);
+  assert.equal(manager.calls.test, 1);
+
+  const personas = await handler(GROUP_BRAIN_ENDPOINTS.wechatPersonalPersonas, {});
+  assert.equal(personas.ok, true);
+  assert.equal(personas.value.personas[0].id, 'dafeiyu-group');
+  assert.equal(manager.calls.personas, 1);
+});
+
+test('group brain RPC reports wechat personal unavailable without a manager', async () => {
+  const handler = createGroupBrainRpcHandler({
+    store: fakeStore(),
+    listBrains: () => [],
+    reloadBrains: async () => {},
+  });
+  const tested = await handler(GROUP_BRAIN_ENDPOINTS.testWechatPersonal, {});
+  assert.equal(tested.ok, false);
+  assert.equal(tested.error.code, 'wechat-personal-unavailable');
+});
