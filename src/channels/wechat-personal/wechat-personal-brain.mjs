@@ -78,6 +78,19 @@ export function formatTranscriptLine(message, nameOf) {
 }
 
 /**
+ * 解析模型回复中的语音标签 `<dsh_im_voice>朗读文字</dsh_im_voice>`。
+ * 返回 `{ text, voiceText }`：text 为标签外的普通文本，voiceText 为要合成语音的文字。
+ */
+export function extractVoiceTag(text) {
+  const raw = textOf(text);
+  const match = raw.match(/<dsh_im_voice>([\s\S]*?)<\/dsh_im_voice>/i);
+  if (!match) return { text: raw, voiceText: '' };
+  const voiceText = textOf(match[1]);
+  const rest = textOf(raw.replace(match[0], ''));
+  return { text: rest, voiceText };
+}
+
+/**
  * 微信个人号 ↔ 群聊大脑桥。
  *
  * 构造后必须先 `start()`；宿主管理器负责传入已经就绪的 GroupBrain 与生成函数。
@@ -89,6 +102,7 @@ export class WechatPersonalGroupBridge {
   #resolvePersona;
   #sessionExists = null;
   #isSleeping = null;
+  #voice = null;
   #sleepReplyAt = new Map();
   #accountId;
   #ownUserId;
@@ -115,6 +129,7 @@ export class WechatPersonalGroupBridge {
     resolvePersona = null,
     sessionExists = null,
     isSleeping = null,
+    voice = null,
     accountId,
     ownUserId,
     statePath,
@@ -134,6 +149,7 @@ export class WechatPersonalGroupBridge {
     this.#resolvePersona = typeof resolvePersona === 'function' ? resolvePersona : null;
     this.#sessionExists = typeof sessionExists === 'function' ? sessionExists : null;
     this.#isSleeping = typeof isSleeping === 'function' ? isSleeping : null;
+    this.#voice = voice && typeof voice.synthesize === 'function' ? voice : null;
     this.#accountId = accountId;
     this.#ownUserId = ownUserId;
     this.#statePath = textOf(statePath) || join(process.cwd(), 'wechat-personal-cursor.json');
@@ -518,6 +534,35 @@ export class WechatPersonalGroupBridge {
     }
   }
 
+  /** 语音能力是否启用。 */
+  get voiceEnabled() {
+    return Boolean(this.#voice);
+  }
+
+  #voiceInstruction() {
+    if (!this.#voice) return '';
+    const max = Number.isInteger(this.#voice.maxChars) ? this.#voice.maxChars : 300;
+    return `语音：群里可以接收语音。只有当你主动想用语音，或群成员明确要求「用语音/朗读/唱一句/发语音」时，才把要说的话（纯文本、不超过 ${max} 字、不要 Markdown）放进 <dsh_im_voice>…</dsh_im_voice> 标签；标签外文字会作为普通文字消息。不要滥用语音。`;
+  }
+
+  async #sendVoiceNote({ chatId, text, groupName }) {
+    if (!this.#voice) return false;
+    const clean = textOf(text).slice(0, Number.isInteger(this.#voice.maxChars) ? this.#voice.maxChars : 300);
+    if (!clean) return false;
+    try {
+      const bytes = await this.#voice.synthesize(clean);
+      const upload = await this.#client.uploadMedia({ name: 'dafeiyu-voice.wav', bytes, mediaType: 'audio/wav' });
+      const sourceId = typeof upload?.id === 'string' ? upload.id : '';
+      if (!sourceId) throw new Error('media upload did not return an id');
+      await this.#client.sendVoice({ threadId: chatId, sourceId });
+      await this.#recordBotMessage({ chatId, text: `[语音] ${clean}`, groupName });
+      return true;
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] voice reply failed:', error?.message ?? error);
+      return false;
+    }
+  }
+
   async #replyDirect({ event, observed, message }) {
     try {
       // 同一个群复用统一 DSH 会话：第一次完整注入人设/记忆/画像，之后只补新消息。
@@ -539,7 +584,11 @@ export class WechatPersonalGroupBridge {
       sections.push(`群成员 ${event.senderName} ${reason}：\n${event.text}`);
       // TODO(识图暂停)：恢复识图时，在 prompt 中加入「对方还发送了一张图片…」并把 images 传给 generate。
       if (blocks.length > 0) sections.push(...blocks);
-      sections.push('请用纯文本直接回复（不要使用 Markdown 标记，不要输出解释过程）；回复要像群友聊天，简洁自然。');
+      const voiceHint = this.#voiceInstruction();
+      if (voiceHint) sections.push(voiceHint);
+      sections.push(this.#voice
+        ? '请直接回复：普通文字直接输出；如果要发语音，把朗读文字放进 <dsh_im_voice> 标签。不要使用 Markdown 标记，不要输出解释过程，像群友聊天一样简洁自然。'
+        : '请用纯文本直接回复（不要使用 Markdown 标记，不要输出解释过程）；回复要像群友聊天，简洁自然。');
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'direct',
@@ -548,7 +597,17 @@ export class WechatPersonalGroupBridge {
       });
       const text = textOf(raw);
       if (!text || text === SKIP_TOKEN || text.startsWith(SKIP_TOKEN)) return;
-      const reply = text.slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+      const parsed = extractVoiceTag(text);
+      let voiceSent = false;
+      if (parsed.voiceText) {
+        voiceSent = await this.#sendVoiceNote({ chatId: event.chatId, text: parsed.voiceText, groupName: event.groupName });
+        if (!voiceSent) parsed.text = textOf(parsed.text) ? `${parsed.text}\n${parsed.voiceText}` : parsed.voiceText;
+      }
+      const reply = textOf(parsed.text).slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+      if (!reply) {
+        if (voiceSent) return;
+        return;
+      }
       await this.#client.sendText({ threadId: event.chatId, text: reply, mentions: { userIds: [event.senderId] } });
       await this.#recordBotMessage({ chatId: event.chatId, text: reply, groupName: event.groupName });
     } catch (error) {
@@ -572,7 +631,11 @@ export class WechatPersonalGroupBridge {
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
       sections.push(`群成员 ${event.senderName} 刚刚说：\n${event.text}`);
       // TODO(识图暂停)：恢复识图时，在 prompt 中加入「对方还发送了一张图片…」并把 images 传给 generate。
-      sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
+      const voiceHint = this.#voiceInstruction();
+      if (voiceHint) sections.push(voiceHint);
+      sections.push(this.#voice
+        ? '群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释。普通文字直接输出；要发语音时把朗读文字放进 <dsh_im_voice> 标签。'
+        : '群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'follow-up',
@@ -581,7 +644,17 @@ export class WechatPersonalGroupBridge {
       });
       const text = textOf(raw);
       if (!text || text === SKIP_TOKEN || text.startsWith(SKIP_TOKEN)) return;
-      const reply = text.slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+      const parsed = extractVoiceTag(text);
+      let voiceSent = false;
+      if (parsed.voiceText) {
+        voiceSent = await this.#sendVoiceNote({ chatId: event.chatId, text: parsed.voiceText, groupName: event.groupName });
+        if (!voiceSent) parsed.text = textOf(parsed.text) ? `${parsed.text}\n${parsed.voiceText}` : parsed.voiceText;
+      }
+      const reply = textOf(parsed.text).slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+      if (!reply) {
+        if (voiceSent) return;
+        return;
+      }
       await this.#client.sendText({ threadId: event.chatId, text: reply });
       await this.#recordBotMessage({ chatId: event.chatId, text: reply, groupName: event.groupName });
     } catch (error) {

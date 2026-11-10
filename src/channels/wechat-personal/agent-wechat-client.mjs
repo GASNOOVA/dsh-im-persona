@@ -341,6 +341,67 @@ export class AgentWechatClient {
   }
 
   /**
+   * 上传媒体字节（图片/文件/语音等），返回 OwnedMediaSource { id, name, mediaType, byteLength }。
+   * 发送图片/文件/语音前必须先上传并以返回的 sourceId 发送。
+   */
+  async uploadMedia({ name, bytes, mediaType = 'application/octet-stream', signal } = {}) {
+    if (typeof name !== 'string' || !name) throw new TypeError('name is required');
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new TypeError('bytes are required');
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: mediaType }), name);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('agent-wechat upload timed out')), this.#timeoutMs);
+    timer.unref?.();
+    const onAbort = () => controller.abort(signal.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      const response = await this.#fetch(`${this.#baseUrl}/v1/accounts/${encode(this.#accountId)}/uploads`, {
+        method: 'POST',
+        headers: this.#headers(),
+        body: form,
+        signal: controller.signal,
+      });
+      const text = await response.text().catch(() => '');
+      let parsed = null;
+      if (text) { try { parsed = JSON.parse(text); } catch { parsed = null; } }
+      if (!response.ok) {
+        const code = parsed?.error?.code ?? parsed?.code ?? '';
+        throw new AgentWechatError(
+          parsed?.error?.message ?? parsed?.message ?? `agent-wechat upload failed (${response.status})`,
+          { status: response.status, code: typeof code === 'string' ? code : '', body: parsed },
+        );
+      }
+      return parsed;
+    } catch (error) {
+      if (error instanceof AgentWechatError) throw error;
+      if (controller.signal.aborted) throw new AgentWechatError('agent-wechat upload timed out', { code: 'timeout' });
+      throw new AgentWechatError(`agent-wechat upload failed: ${error?.message ?? error}`, { code: 'network' });
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /** 发送语音条：sourceId 来自 uploadMedia；返回 MediaJob（202）。 */
+  async sendVoice({ threadId, sourceId, durationMs, idempotencyKey, signal } = {}) {
+    if (typeof threadId !== 'string' || !threadId) throw new TypeError('threadId is required');
+    if (typeof sourceId !== 'string' || !sourceId) throw new TypeError('sourceId is required');
+    const key = typeof idempotencyKey === 'string' && idempotencyKey
+      ? idempotencyKey
+      : `dsh-im-voice-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    return this.#request('POST', `/v1/accounts/${encode(this.#accountId)}/sends`, {
+      signal,
+      headers: { 'Idempotency-Key': key },
+      body: {
+        kind: 'voice',
+        threadId,
+        sourceId,
+        ...(Number.isFinite(durationMs) && durationMs > 0 ? { durationMs } : {}),
+      },
+    });
+  }
+
+  /**
    * SSE 事件流：断线重连时由调用方传入 after 游标补发。
    * yield { id, cursor, kind, payload, createdAt }。
    */

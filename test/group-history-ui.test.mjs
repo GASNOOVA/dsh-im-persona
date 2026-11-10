@@ -122,7 +122,7 @@ test('General tab configures sidebar and retention and retains Attachments navig
   const historyForm = () => renderer.root.findByProps({ 'aria-label': '群聊天记录' });
   const input = () => historyForm().findByProps({ type: 'number' });
   assert.equal(input().props.value, '14');
-  assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 5);
+  assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 6);
   assert.equal(renderer.root.findAllByProps({ className: 'dim-groupHistoryList' }).length, 0);
   assert.deepEqual(calls.map((call) => call.endpoint), ['settings.sidebar-entry.get', 'settings.group-history.get', 'settings.off-peak.get', 'settings.group-brain.get', 'settings.group-brain.status', 'settings.group-brain.wechat-personal.personas']);
   assert.equal(renderer.root.findAllByProps({ type: 'submit' }).length, 1,

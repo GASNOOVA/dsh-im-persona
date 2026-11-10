@@ -164,3 +164,31 @@ test('group brain RPC reports wechat personal unavailable without a manager', as
   assert.equal(tested.ok, false);
   assert.equal(tested.error.code, 'wechat-personal-unavailable');
 });
+
+test('group brain RPC tests the feiyu voice service with draft settings', async () => {
+  const calls = [];
+  class FakeVoiceClient {
+    constructor(options) { calls.push({ kind: 'construct', options }); }
+    async speak({ text, style }) { calls.push({ kind: 'speak', text, style }); return new Uint8Array(1234); }
+  }
+  const handler = createGroupBrainRpcHandler({
+    store: fakeStore(),
+    listBrains: () => [],
+    reloadBrains: async () => {},
+    voiceClientClass: FakeVoiceClient,
+  });
+  const result = await handler(GROUP_BRAIN_ENDPOINTS.testVoice, {
+    serviceUrl: 'http://127.0.0.1:9880',
+    style: 'gentle',
+    apiKeyPath: '',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.style, 'gentle');
+  assert.equal(result.value.byteLength, 1234);
+  assert.equal(calls[0].options.baseUrl, 'http://127.0.0.1:9880');
+  assert.equal(calls[1].style, 'gentle');
+
+  const invalid = await handler(GROUP_BRAIN_ENDPOINTS.testVoice, {});
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error.code, 'bad-request');
+});

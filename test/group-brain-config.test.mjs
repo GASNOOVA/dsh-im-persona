@@ -133,3 +133,33 @@ test('ambient follow-up window keeps explicit values within limits', () => {
   assert.equal(disabled.ambient.followUpMinIntervalMs, 0);
   assert.ok(GROUP_BRAIN_LIMITS.followUpMs[1] >= 600_000);
 });
+
+test('normalizeWechatPersonalSettings adds voice defaults and normalizes voice fields', () => {
+  const normalized = normalizeWechatPersonalSettings({
+    enabled: true,
+    daemonUrl: 'http://127.0.0.1:16175',
+    accountId: 'xiaohao',
+    voice: {
+      enabled: true,
+      serviceUrl: 'http://127.0.0.1:9880/',
+      apiKeyPath: '/tmp/key.txt',
+      style: 'gentle',
+      maxChars: 120,
+      timeoutMs: 30_000,
+    },
+  });
+  assert.deepEqual(normalized.voice, {
+    enabled: true,
+    serviceUrl: 'http://127.0.0.1:9880',
+    apiKeyPath: '/tmp/key.txt',
+    style: 'gentle',
+    maxChars: 120,
+    timeoutMs: 30_000,
+  });
+  const fallback = normalizeWechatPersonalSettings({ voice: { style: 'unknown', maxChars: 1, timeoutMs: 1, serviceUrl: 'ftp://x' } });
+  assert.equal(fallback.voice.enabled, false);
+  assert.equal(fallback.voice.style, 'cute');
+  assert.equal(fallback.voice.maxChars, 300);
+  assert.equal(fallback.voice.timeoutMs, 120_000);
+  assert.equal(fallback.voice.serviceUrl, 'http://127.0.0.1:9880');
+});

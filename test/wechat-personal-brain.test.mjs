@@ -31,6 +31,13 @@ function fakeClient({ messages = [], threads = [], members = [], latestCursor = 
     latestEventCursor: async () => latestCursor,
     sent,
     sendText: async (payload) => { sent.push(payload); return { id: `send-${sent.length}`, state: 'accepted' }; },
+    uploads: [],
+    uploadMedia: async ({ name, bytes, mediaType }) => {
+      client.uploads.push({ name, bytes, mediaType });
+      return { id: `upload-${client.uploads.length}`, name, mediaType, byteLength: bytes?.byteLength ?? 0 };
+    },
+    voices: [],
+    sendVoice: async (payload) => { client.voices.push(payload); return { id: `voice-${client.voices.length}`, state: 'accepted' }; },
     listThreads: async () => threads,
     listMembers: async () => members,
     listMessages: async () => messages,
@@ -669,6 +676,84 @@ test('start preloads known groups so the status panel is not empty after a resta
     assert.equal(status.groups[0].memberCount, 3);
   } finally {
     await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+
+test('a <dsh_im_voice> reply is synthesized and sent as a voice note', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-voice-'));
+  try {
+    const messages = [
+      { id: 'msg-voice', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 用语音说句话', createdAt: '2026-11-10T06:00:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-voice', direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
+    const brain = fakeBrain();
+    const synthesized = [];
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain,
+      generate: async () => '好呀，<dsh_im_voice>大家好，我是大肥鱼。</dsh_im_voice>来啦～',
+      resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+      voice: {
+        synthesize: async (text) => { synthesized.push(text); return new Uint8Array([0xff, 0xd8, 0x00]); },
+        maxChars: 300,
+        style: 'cute',
+      },
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.voices.length === 1, 'voice note should be sent');
+      assert.deepEqual(synthesized, ['大家好，我是大肥鱼。']);
+      assert.equal(client.uploads.length, 1);
+      assert.equal(client.uploads[0].mediaType, 'audio/wav');
+      assert.deepEqual(client.voices[0], { threadId: GROUP_ID, sourceId: 'upload-1' });
+      assert.equal(client.sent.length, 1);
+      assert.equal(client.sent[0].text, '好呀，来啦～');
+      assert.ok(brain.observed.some((event) => event.kind === 'bot' && event.text.includes('[语音] 大家好，我是大肥鱼。')));
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('when voice synthesis fails the voice text falls back to a normal message', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-voice-fallback-'));
+  try {
+    const messages = [
+      { id: 'msg-voice-2', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 用语音说句话', createdAt: '2026-11-10T06:00:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-voice-2', direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '<dsh_im_voice>大家好，我是大肥鱼。</dsh_im_voice>',
+      resolvePersona: async () => null,
+      voice: { synthesize: async () => { throw new Error('service down'); }, maxChars: 300, style: 'cute' },
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.sent.length === 1, 'fallback text should be sent');
+      assert.equal(client.voices.length, 0);
+      assert.equal(client.sent[0].text, '大家好，我是大肥鱼。');
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
     await rm(home, { recursive: true, force: true });
   }
 });

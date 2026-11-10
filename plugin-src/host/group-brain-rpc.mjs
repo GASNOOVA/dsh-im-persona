@@ -5,10 +5,12 @@
 // 调用这些端点。保存后会要求进程内已创建的 brain 重新读取配置（群白名单、
 // 静默窗口、整理间隔等），不需要重连机器人。
 
+import { readFile } from 'node:fs/promises';
 import {
   getGroupBrainSettingsStore,
   normalizeGroupBrainSettings,
 } from '../../src/channels/shared/group-brain/group-brain-config.mjs';
+import { FeiyuVoiceClient } from '../../src/channels/wechat-personal/feiyu-voice-client.mjs';
 import {
   listHostGroupBrains,
   reloadHostGroupBrains,
@@ -27,6 +29,7 @@ export const GROUP_BRAIN_ENDPOINTS = Object.freeze({
   consolidate: 'settings.group-brain.consolidate',
   testWechatPersonal: 'settings.group-brain.wechat-personal.test',
   wechatPersonalPersonas: 'settings.group-brain.wechat-personal.personas',
+  testVoice: 'settings.group-brain.wechat-personal.voice.test',
 });
 
 const SET_KEYS = new Set(['enabled', 'maxMembers', 'allowedGroups', 'ambient', 'memory', 'profiles', 'wechatPersonal']);
@@ -75,6 +78,7 @@ export function createGroupBrainRpcHandler({
   listBrains = listHostGroupBrains,
   reloadBrains = reloadHostGroupBrains,
   wechatPersonalManager = null,
+  voiceClientClass = null,
 } = {}) {
   const settingsStore = store ?? getGroupBrainSettingsStore(config);
   const manager = () => wechatPersonalManager ?? getWechatPersonalManager();
@@ -140,6 +144,28 @@ export function createGroupBrainRpcHandler({
           results.push({ channel: brain.channel, botId: brain.botId, result: await brain.maybeConsolidateAll({ force: true }) });
         }
         return { ok: true, value: { results } };
+      }
+      if (endpoint === GROUP_BRAIN_ENDPOINTS.testVoice) {
+        if (!isPlainRecord(payload)) return badRequest('Invalid voice test request.');
+        const serviceUrl = typeof payload.serviceUrl === 'string' ? payload.serviceUrl.trim() : '';
+        if (!serviceUrl) return badRequest('请先填写声音服务地址。');
+        const style = payload.style === 'gentle' ? 'gentle' : 'cute';
+        try {
+          const VoiceClient = voiceClientClass ?? FeiyuVoiceClient;
+          let apiKey = '';
+          if (typeof payload.apiKeyPath === 'string' && payload.apiKeyPath.trim()) {
+            apiKey = (await readFile(payload.apiKeyPath.trim(), 'utf8')).trim();
+            if (!apiKey) throw new Error('API Key 文件为空');
+          }
+          const client = new VoiceClient({ baseUrl: serviceUrl, apiKey, timeoutMs: 120_000 });
+          const bytes = await client.speak({ text: '你好，我是大肥鱼，语音服务连接正常。', style });
+          return { ok: true, value: { serviceUrl, style, byteLength: bytes.byteLength } };
+        } catch (error) {
+          return {
+            ok: false,
+            error: { code: 'voice-test-failed', message: `声音服务测试失败：${error?.message ?? error}` },
+          };
+        }
       }
       if (endpoint === GROUP_BRAIN_ENDPOINTS.testWechatPersonal) {
         if (isPlainRecord(payload) && Object.keys(payload).length > 0) return badRequest('Invalid group brain request.');

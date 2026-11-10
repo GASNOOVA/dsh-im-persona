@@ -29,6 +29,7 @@ import {
   AgentWechatClient,
   normalizeAgentWechatDaemonUrl,
 } from '../../src/channels/wechat-personal/agent-wechat-client.mjs';
+import { FeiyuVoiceClient } from '../../src/channels/wechat-personal/feiyu-voice-client.mjs';
 import { WechatPersonalGroupBridge } from '../../src/channels/wechat-personal/wechat-personal-brain.mjs';
 import { createHarnessGroupBrainGenerator } from './group-brain-runtime.mjs';
 import { getGroupBrainSessionRegistry, groupBrainSessionKey } from './group-brain-sessions.mjs';
@@ -137,12 +138,18 @@ function spawnAgentWechatDaemon({ daemonDir, daemonUrl, logger = console }) {
   } catch {
     stdio = 'ignore';
   }
+  // 语音/视频发送需要 ffmpeg 与 ffprobe：优先使用 daemon 目录自带的 bin/，
+  // 其次沿用宿主 PATH（系统安装的 ffmpeg）。
+  const bundledBin = join(daemonDir, 'bin');
+  const pathParts = String(process.env.PATH ?? '').split(':').filter(Boolean);
+  const envPath = [bundledBin, ...pathParts.filter((part) => part !== bundledBin)].join(':');
   const child = spawn(bin, ['--data-dir', join(daemonDir, 'aw-data'), 'serve', '--listen', listen], {
     cwd: daemonDir,
     detached: true,
     stdio,
     env: {
       ...process.env,
+      PATH: envPath,
       HOME: join(daemonDir, 'home'),
       XDG_RUNTIME_DIR: join(daemonDir, 'run'),
       XDG_CONFIG_HOME: join(daemonDir, 'home', '.config'),
@@ -450,6 +457,37 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
     }
   }
 
+  /**
+   * 读取语音配置并创建 feiyu 合成桥：未启用、Key 文件读取失败或服务不可用都 fail-soft 返回 null，
+   * 群聊桥此时只回文字，不影响其它功能。
+   */
+  async function resolveVoiceBridge(voice) {
+    if (!voice?.enabled) return null;
+    try {
+      const apiKeyPath = typeof voice.apiKeyPath === 'string' ? voice.apiKeyPath.trim() : '';
+      let apiKey = '';
+      if (apiKeyPath) {
+        apiKey = (await readFile(apiKeyPath, 'utf8')).trim();
+        if (!apiKey) throw new Error('语音服务 API Key 文件为空');
+      }
+      const VoiceClient = internals.voiceClientClass ?? FeiyuVoiceClient;
+      const client = internals.voiceClient ?? new VoiceClient({
+        baseUrl: voice.serviceUrl,
+        apiKey,
+        timeoutMs: voice.timeoutMs,
+      });
+      return {
+        synthesize: async (text) => client.speak({ text, style: voice.style }),
+        maxChars: voice.maxChars,
+        style: voice.style,
+        serviceUrl: voice.serviceUrl,
+      };
+    } catch (error) {
+      logger.warn?.('[wechat-personal] voice replies disabled: unable to initialise feiyu voice client:', error?.message ?? error);
+      return null;
+    }
+  }
+
   async function startSession(settings) {
     if (!settings?.accountId) throw new Error('未配置微信个人号账号 ID');
     if (!settings?.daemonUrl) throw new Error('未配置 agent-wechat daemon 地址');
@@ -518,6 +556,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       return rawGenerate(request);
     };
     const resolvePersona = async () => resolveWechatPersonalPersona(config, settings.personaId);
+    const voice = await resolveVoiceBridge(settings.voice ?? {});
     // 闲时启用且处于 DeepSeek 高峰时，桥接层直接回固定提示，不进入模型。
     const isSleeping = async () => {
       try { return offPeakSettings.shouldBlockInbound?.(new Date()) === true; } catch { return false; }
@@ -545,6 +584,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       resolvePersona,
       sessionExists,
       isSleeping,
+      voice,
       accountId: settings.accountId,
       ownUserId,
       statePath: cursorPathOf(config, settings.accountId),
@@ -647,6 +687,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
         }
         : null,
       runtime,
+      voice: current?.bridge?.voiceEnabled === true,
       persona: current?.settings?.personaId ?? settings?.wechatPersonal?.personaId ?? DEFAULT_PERSONA_ID,
     };
   }
