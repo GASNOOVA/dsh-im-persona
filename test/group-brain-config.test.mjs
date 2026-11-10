@@ -22,7 +22,17 @@ test('group brain settings normalize unknown input to conservative defaults', ()
       { channel: '', botId: 'bot-2', chatId: 'group-2' },
       null,
     ],
-    ambient: { enabled: true, silenceMs: 5, minMessages: 0, cooldownMs: -1, maxPerHour: 999, maxPerDay: 2 },
+    ambient: {
+      enabled: true,
+      silenceMs: 5,
+      minMessages: 0,
+      cooldownMs: -1,
+      maxPerHour: 999,
+      maxPerDay: 2,
+      followUpMs: 999_999,
+      followUpMaxReplies: -1,
+      followUpMinIntervalMs: 1.5,
+    },
     memory: { consolidateIntervalDays: 30, segmentGapMs: 1, maxMemoryChars: 64_000 },
     profiles: { enabled: false, maxProfiles: 99 },
     wechatPersonal: {
@@ -42,6 +52,12 @@ test('group brain settings normalize unknown input to conservative defaults', ()
   assert.equal(settings.ambient.minMessages, DEFAULT_GROUP_BRAIN_SETTINGS.ambient.minMessages);
   assert.equal(settings.ambient.maxPerHour, DEFAULT_GROUP_BRAIN_SETTINGS.ambient.maxPerHour);
   assert.equal(settings.ambient.maxPerDay, 2);
+  assert.equal(settings.ambient.followUpMs, DEFAULT_GROUP_BRAIN_SETTINGS.ambient.followUpMs);
+  assert.equal(settings.ambient.followUpMaxReplies, DEFAULT_GROUP_BRAIN_SETTINGS.ambient.followUpMaxReplies);
+  assert.equal(
+    settings.ambient.followUpMinIntervalMs,
+    DEFAULT_GROUP_BRAIN_SETTINGS.ambient.followUpMinIntervalMs,
+  );
   assert.equal(settings.memory.segmentGapMs, DEFAULT_GROUP_BRAIN_SETTINGS.memory.segmentGapMs);
   assert.equal(settings.profiles.enabled, false);
   assert.equal(settings.profiles.maxProfiles, DEFAULT_GROUP_BRAIN_SETTINGS.profiles.maxProfiles);
@@ -100,4 +116,20 @@ test('wechat personal settings validate daemon url, account id and persona', () 
 
   const merged = normalizeGroupBrainSettings({ wechatPersonal: settings });
   assert.equal(merged.wechatPersonal.accountId, 'xiaohao');
+});
+
+
+test('ambient follow-up window keeps explicit values within limits', () => {
+  const settings = normalizeGroupBrainSettings({
+    ambient: { followUpMs: 120_000, followUpMaxReplies: 12, followUpMinIntervalMs: 3_000 },
+  });
+  assert.equal(settings.ambient.followUpMs, 120_000);
+  assert.equal(settings.ambient.followUpMaxReplies, 12);
+  assert.equal(settings.ambient.followUpMinIntervalMs, 3_000);
+
+  const disabled = normalizeGroupBrainSettings({ ambient: { followUpMs: 0, followUpMaxReplies: 0, followUpMinIntervalMs: 0 } });
+  assert.equal(disabled.ambient.followUpMs, 0);
+  assert.equal(disabled.ambient.followUpMaxReplies, 0);
+  assert.equal(disabled.ambient.followUpMinIntervalMs, 0);
+  assert.ok(GROUP_BRAIN_LIMITS.followUpMs[1] >= 600_000);
 });

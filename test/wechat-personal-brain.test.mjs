@@ -46,13 +46,19 @@ function fakeClient({ messages = [], threads = [], members = [], latestCursor = 
   return client;
 }
 
-function fakeBrain({ direct = true } = {}) {
+function fakeBrain({ direct = true, followUp = false } = {}) {
   const observed = [];
   return {
     observed,
     observe: async (event) => {
       observed.push(event);
-      return { direct: direct && event.mentionedBot === true, recorded: true, duplicate: false, blocks: event.mentionedBot ? ['<dsh_im_direct_instruction>回复对方</dsh_im_direct_instruction>', '<dsh_im_group_memory>记忆</dsh_im_group_memory>'] : [] };
+      return {
+        direct: direct && event.mentionedBot === true,
+        followUp: followUp && event.mentionedBot !== true && event.kind !== 'bot',
+        recorded: true,
+        duplicate: false,
+        blocks: event.mentionedBot ? ['<dsh_im_direct_instruction>回复对方</dsh_im_direct_instruction>', '<dsh_im_group_memory>记忆</dsh_im_group_memory>'] : [],
+      };
     },
   };
 }
@@ -214,6 +220,56 @@ test('first start begins at the daemon cursor instead of replaying history', asy
     await waitFor(() => client.askedAfter.length === 1, 'stream should be opened');
     assert.equal(client.askedAfter[0], '285');
     assert.equal(brain.observed.length, 0);
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+
+test('a follow-up window message replies naturally without an @ mention', async () => {
+  const messages = [
+    {
+      id: 'msg-2',
+      threadId: GROUP_ID,
+      direction: 'incoming',
+      senderId: SENDER_ID,
+      body: '不过今天火锅真不错',
+      createdAt: '2026-11-10T05:22:00+00:00',
+      mentions: { self: false, userIds: [] },
+    },
+  ];
+  const client = fakeClient({
+    messages,
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [{ id: SENDER_ID, displayName: 'Zach' }] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }, { id: OWN_ID, displayName: '大肥鱼版' }],
+  });
+  client.events = [{ cursor: '8', kind: 'message.committed', payload: { messageId: 'msg-2', direction: 'incoming' } }];
+  const brain = fakeBrain({ direct: true, followUp: true });
+  const prompts = [];
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain,
+    generate: async (request) => { prompts.push(request); return '是啊，那家店的毛肚特别脆。'; },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 1, 'follow-up reply should be sent');
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0].kind, 'follow-up');
+    assert.match(prompts[0].prompt, /你是大肥鱼/u);
+    assert.match(prompts[0].prompt, /不过今天火锅真不错/u);
+    assert.doesNotMatch(prompts[0].prompt, /<dsh_im_direct_instruction>/u);
+    assert.equal(client.sent[0].text, '是啊，那家店的毛肚特别脆。');
+    assert.equal(client.sent[0].mentions, undefined, 'follow-up 不 @ 人');
+    assert.ok(brain.observed.length >= 2, 'user + bot message recorded');
+    assert.equal(brain.observed.at(-1).kind, 'bot');
   } finally {
     await bridge.stop();
     await rm(home, { recursive: true, force: true });

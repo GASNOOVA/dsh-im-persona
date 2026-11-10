@@ -30,6 +30,10 @@ export const DEFAULT_GROUP_BRAIN_SETTINGS = Object.freeze({
     cooldownMs: 600_000,
     maxPerHour: 4,
     maxPerDay: 40,
+    // 被 @ 之后的连续对话窗口：窗口内未 @ 的群消息也会触发自然回复。
+    followUpMs: 300_000,
+    followUpMaxReplies: 8,
+    followUpMinIntervalMs: 8_000,
   }),
   memory: Object.freeze({
     consolidateIntervalDays: 30,
@@ -61,6 +65,9 @@ export const GROUP_BRAIN_LIMITS = Object.freeze({
   cooldownMs: Object.freeze([60_000, 86_400_000]),
   maxPerHour: Object.freeze([1, 30]),
   maxPerDay: Object.freeze([1, 300]),
+  followUpMs: Object.freeze([0, 600_000]),
+  followUpMaxReplies: Object.freeze([0, 50]),
+  followUpMinIntervalMs: Object.freeze([0, 300_000]),
   consolidateIntervalDays: Object.freeze([1, 365]),
   segmentGapMs: Object.freeze([60_000, 86_400_000]),
   maxMemoryChars: Object.freeze([2_000, 64_000]),
@@ -168,6 +175,17 @@ export function normalizeGroupBrainSettings(value) {
       cooldownMs: readInteger(ambient.cooldownMs, defaults.ambient.cooldownMs, GROUP_BRAIN_LIMITS.cooldownMs),
       maxPerHour: readInteger(ambient.maxPerHour, defaults.ambient.maxPerHour, GROUP_BRAIN_LIMITS.maxPerHour),
       maxPerDay: readInteger(ambient.maxPerDay, defaults.ambient.maxPerDay, GROUP_BRAIN_LIMITS.maxPerDay),
+      followUpMs: readInteger(ambient.followUpMs, defaults.ambient.followUpMs, GROUP_BRAIN_LIMITS.followUpMs),
+      followUpMaxReplies: readInteger(
+        ambient.followUpMaxReplies,
+        defaults.ambient.followUpMaxReplies,
+        GROUP_BRAIN_LIMITS.followUpMaxReplies,
+      ),
+      followUpMinIntervalMs: readInteger(
+        ambient.followUpMinIntervalMs,
+        defaults.ambient.followUpMinIntervalMs,
+        GROUP_BRAIN_LIMITS.followUpMinIntervalMs,
+      ),
     }),
     memory: Object.freeze({
       consolidateIntervalDays: readInteger(

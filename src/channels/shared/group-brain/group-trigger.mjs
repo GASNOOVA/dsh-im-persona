@@ -8,7 +8,9 @@
 // - silenceMs：最后一条消息之后安静多久触发评估；
 // - minMessages：一个静默窗口内至少要有多少条消息（防「两个人一问一答也接话」）；
 // - cooldownMs：两次主动接话之间的最小间隔；
-// - maxPerHour / maxPerDay：限流窗口内最多主动接话次数（滑动窗口）。
+// - maxPerHour / maxPerDay：限流窗口内最多主动接话次数（滑动窗口）；
+// - followUpMs / followUpMaxReplies / followUpMinIntervalMs：被 @ 之后的连续对话
+//   窗口。窗口内未 @ 的消息也可以直接触发一次自然回复，形成连续聊天效果。
 
 /** 默认触发参数（冻结，供配置缺省合并）。 */
 export const DEFAULT_GROUP_TRIGGER = Object.freeze({
@@ -17,6 +19,9 @@ export const DEFAULT_GROUP_TRIGGER = Object.freeze({
   cooldownMs: 600_000,
   maxPerHour: 4,
   maxPerDay: 40,
+  followUpMs: 300_000,
+  followUpMaxReplies: 8,
+  followUpMinIntervalMs: 8_000,
 });
 
 /** 限流窗口长度（毫秒）。 */
@@ -33,6 +38,9 @@ const FIELD_RULES = Object.freeze({
   cooldownMs: 0,
   maxPerHour: 1,
   maxPerDay: 1,
+  followUpMs: 0,
+  followUpMaxReplies: 0,
+  followUpMinIntervalMs: 0,
 });
 
 const FIELD_NAMES = Object.freeze(Object.keys(FIELD_RULES));
@@ -115,6 +123,10 @@ export class GroupTriggerEngine {
         timer: null,
         lastAmbientAt: null,
         ambientAt: [],
+        followUpUntil: 0,
+        followUpReplies: 0,
+        lastFollowUpAt: null,
+        lastBotReplyAt: null,
       };
       this.#states.set(chatId, state);
     }
@@ -146,6 +158,11 @@ export class GroupTriggerEngine {
     if (mentionedBot) {
       this.#clearTimer(state);
       state.buffer = [];
+      state.followUpUntil = this.#settings.followUpMs > 0
+        ? timestamp + this.#settings.followUpMs
+        : 0;
+      state.followUpReplies = 0;
+      state.lastFollowUpAt = null;
       return 'direct';
     }
 
@@ -162,7 +179,23 @@ export class GroupTriggerEngine {
     // Node 定时器不阻止进程退出；fake timer 的句柄可能是数字，这里做兼容。
     if (typeof timer?.unref === 'function') timer.unref();
     state.timer = timer;
+    if (this.#claimFollowUp(state, timestamp)) return 'followUp';
     return 'record';
+  }
+
+  /** 判断并占用一次「连续对话窗口」内的自动回复额度。 */
+  #claimFollowUp(state, timestamp) {
+    const { followUpMs, followUpMaxReplies, followUpMinIntervalMs } = this.#settings;
+    if (followUpMs <= 0 || followUpMaxReplies <= 0) return false;
+    if (!(state.followUpUntil > timestamp)) return false;
+    if (state.followUpReplies >= followUpMaxReplies) return false;
+    if (state.lastFollowUpAt !== null && timestamp - state.lastFollowUpAt < followUpMinIntervalMs) {
+      return false;
+    }
+    state.followUpReplies += 1;
+    state.lastFollowUpAt = timestamp;
+    state.lastBotReplyAt = timestamp;
+    return true;
   }
 
   /**
@@ -189,7 +222,8 @@ export class GroupTriggerEngine {
     state.buffer = [];
 
     if (messages.length < minMessages) return null;
-    if (state.lastAmbientAt !== null && now - state.lastAmbientAt < cooldownMs) return null;
+    const lastBotReplyAt = Math.max(state.lastAmbientAt ?? 0, state.lastBotReplyAt ?? 0);
+    if (lastBotReplyAt > 0 && now - lastBotReplyAt < cooldownMs) return null;
 
     // 只保留近 24h 记录（滑动窗口），再判断小时/日上限。
     state.ambientAt = state.ambientAt.filter((time) => now - time < GROUP_TRIGGER_WINDOWS.day);
@@ -235,6 +269,7 @@ export class GroupTriggerEngine {
         hourlyCount: 0,
         dailyCount: 0,
         pendingTimer: false,
+        followUp: { active: false, remainingReplies: 0 },
       };
     }
     const now = this.#now();
@@ -245,6 +280,10 @@ export class GroupTriggerEngine {
       hourlyCount: daily.filter((time) => now - time < GROUP_TRIGGER_WINDOWS.hour).length,
       dailyCount: daily.length,
       pendingTimer: state.timer !== null,
+      followUp: {
+        active: this.#settings.followUpMs > 0 && state.followUpUntil > now,
+        remainingReplies: Math.max(0, this.#settings.followUpMaxReplies - state.followUpReplies),
+      },
     };
   }
 

@@ -84,6 +84,9 @@ test('normalizeGroupTriggerSettings：缺省合并默认值，显式值原样保
     cooldownMs: 0,
     maxPerHour: 2,
     maxPerDay: 10,
+    followUpMs: DEFAULT_GROUP_TRIGGER.followUpMs,
+    followUpMaxReplies: DEFAULT_GROUP_TRIGGER.followUpMaxReplies,
+    followUpMinIntervalMs: DEFAULT_GROUP_TRIGGER.followUpMinIntervalMs,
   });
   assert.equal(Object.isFrozen(merged), true);
   // 未知字段忽略；缺省字段继续合并默认值。
@@ -257,6 +260,7 @@ test('status：未知群返回零值，已有群返回缓冲/计时器/计数快
     hourlyCount: 0,
     dailyCount: 0,
     pendingTimer: false,
+    followUp: { active: false, remainingReplies: 0 },
   });
 
   observe(engine, 'g1', '甲');
@@ -349,4 +353,55 @@ test('observe：缺少 chatId 抛 TypeError；非法 settings 回退默认值', 
   assert.equal(engine.settings, DEFAULT_GROUP_TRIGGER);
   assert.throws(() => engine.observe({ mentionedBot: false }), TypeError);
   assert.throws(() => engine.evaluate(''), TypeError);
+});
+
+
+test('连续对话窗口：@ 之后的未 @ 消息返回 followUp，窗口到期恢复 record', () => {
+  const clock = createClock();
+  const { engine } = createEngine(clock, {
+    followUpMs: 60_000,
+    followUpMaxReplies: 3,
+    followUpMinIntervalMs: 5_000,
+    minMessages: 99, // 避免静默定时器干扰断言
+  });
+
+  assert.equal(observe(engine, 'g1', '甲', { mentionedBot: true }), 'direct');
+  clock.advance(6_000);
+  assert.equal(observe(engine, 'g1', '甲'), 'followUp');
+  clock.advance(2_000); // 未达到最小间隔
+  assert.equal(observe(engine, 'g1', '甲'), 'record');
+  clock.advance(5_000);
+  assert.equal(observe(engine, 'g1', '乙'), 'followUp');
+  clock.advance(5_000);
+  assert.equal(observe(engine, 'g1', '乙'), 'followUp');
+  clock.advance(5_000);
+  assert.equal(observe(engine, 'g1', '丙'), 'record', '窗口内续聊上限用尽');
+  clock.advance(60_000);
+  assert.equal(observe(engine, 'g1', '丁'), 'record', '窗口过期');
+});
+
+test('连续对话窗口：followUpMs=0 表示关闭，@ 后仍返回 record', () => {
+  const clock = createClock();
+  const { engine } = createEngine(clock, { followUpMs: 0, minMessages: 99 });
+  assert.equal(observe(engine, 'g1', '甲', { mentionedBot: true }), 'direct');
+  clock.advance(1_000);
+  assert.equal(observe(engine, 'g1', '甲'), 'record');
+});
+
+test('连续对话窗口：status 暴露剩余续聊额度', () => {
+  const clock = createClock();
+  const { engine } = createEngine(clock, {
+    followUpMs: 60_000,
+    followUpMaxReplies: 3,
+    followUpMinIntervalMs: 0,
+    minMessages: 99,
+  });
+  observe(engine, 'g1', '甲', { mentionedBot: true });
+  clock.advance(1_000);
+  observe(engine, 'g1', '甲');
+  const status = engine.status('g1');
+  assert.equal(status.followUp.active, true);
+  assert.equal(status.followUp.remainingReplies, 2);
+  clock.advance(120_000);
+  assert.equal(engine.status('g1').followUp.active, false);
 });

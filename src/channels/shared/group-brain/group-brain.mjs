@@ -424,6 +424,14 @@ export class GroupBrain {
     } catch (error) {
       this.#logger.warn?.('[dsh-im] group trigger observe failed:', error);
     }
+    if (outcome === 'followUp') {
+      // 被 @ 之后的连续对话窗口：群成员继续聊天时直接自然接话。
+      // 与自动接话共用同一套安全门槛（白名单或已知小群）。
+      if (!this.#ambientAllowed(settings, record)) {
+        return { direct: false, followUp: false, recorded: true, duplicate, blocks: [] };
+      }
+      return { direct: false, followUp: true, recorded: true, duplicate, blocks: [] };
+    }
     if (outcome !== 'direct') {
       return { direct: false, recorded: true, duplicate, blocks: [] };
     }

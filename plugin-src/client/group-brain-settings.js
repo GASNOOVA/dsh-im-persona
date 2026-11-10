@@ -15,7 +15,7 @@ const DEFAULT_BRAIN_TEMPLATE = Object.freeze({
   enabled: true,
   maxMembers: 5,
   allowedGroups: [],
-  ambient: { enabled: true, silenceMs: 120_000, minMessages: 2, cooldownMs: 600_000, maxPerHour: 4, maxPerDay: 40 },
+  ambient: { enabled: true, silenceMs: 120_000, minMessages: 2, cooldownMs: 600_000, maxPerHour: 4, maxPerDay: 40, followUpMs: 300_000, followUpMaxReplies: 8, followUpMinIntervalMs: 8_000 },
   memory: { consolidateIntervalDays: 30, segmentGapMs: 600_000, maxMemoryChars: 16_000 },
   profiles: { enabled: true, maxProfiles: 5 },
   wechatPersonal: {
@@ -49,6 +49,9 @@ function normalizeSettings(value) {
       cooldownMs: ambient.cooldownMs ?? DEFAULT_BRAIN_TEMPLATE.ambient.cooldownMs,
       maxPerHour: ambient.maxPerHour ?? DEFAULT_BRAIN_TEMPLATE.ambient.maxPerHour,
       maxPerDay: ambient.maxPerDay ?? DEFAULT_BRAIN_TEMPLATE.ambient.maxPerDay,
+      followUpMs: ambient.followUpMs ?? DEFAULT_BRAIN_TEMPLATE.ambient.followUpMs,
+      followUpMaxReplies: ambient.followUpMaxReplies ?? DEFAULT_BRAIN_TEMPLATE.ambient.followUpMaxReplies,
+      followUpMinIntervalMs: ambient.followUpMinIntervalMs ?? DEFAULT_BRAIN_TEMPLATE.ambient.followUpMinIntervalMs,
     },
     memory: {
       consolidateIntervalDays: memory.consolidateIntervalDays ?? DEFAULT_BRAIN_TEMPLATE.memory.consolidateIntervalDays,
@@ -332,6 +335,21 @@ export function GroupBrainSettings({ rpcCall }) {
             id: `${id}-cooldown`, label: '接话冷却', unit: '分钟', value: minutes(draft.ambient.cooldownMs), min: 1, max: 1440,
             help: '两次自动接话之间的最短间隔。', disabled,
             onChange: (value) => patch({ ambient: { ...draft.ambient, cooldownMs: fromMinutes(value) } }),
+          }),
+          h(NumberField, {
+            id: `${id}-follow-up`, label: '连续对话窗口', unit: '秒', value: seconds(draft.ambient.followUpMs), min: 0, max: 600,
+            help: '被 @ 后这段时间内，未 @ 的群消息也会自然接话；0 表示关闭。', disabled,
+            onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMs: milliseconds(value) } }),
+          }),
+          h(NumberField, {
+            id: `${id}-follow-up-replies`, label: '窗口内续聊上限', value: draft.ambient.followUpMaxReplies, min: 0, max: 50,
+            help: '一次 @ 引发的连续对话最多续聊几条；0 表示关闭。', disabled,
+            onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMaxReplies: value } }),
+          }),
+          h(NumberField, {
+            id: `${id}-follow-up-interval`, label: '续聊最小间隔', unit: '秒', value: seconds(draft.ambient.followUpMinIntervalMs), min: 0, max: 300,
+            help: '连续对话中最快多久回一句，避免刷屏。', disabled,
+            onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMinIntervalMs: milliseconds(value) } }),
           }),
           h(NumberField, {
             id: `${id}-per-hour`, label: '每小时上限', value: draft.ambient.maxPerHour, min: 1, max: 30,

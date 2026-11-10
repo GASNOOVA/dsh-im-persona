@@ -299,8 +299,13 @@ export class WechatPersonalGroupBridge {
       return;
     }
     this.#groups.set(chatId, { ...(this.#groups.get(chatId) ?? {}), chatId, name: group.name, memberCount: group.memberCount, lastSeenAt: event.at });
-    if (!observed?.direct) return;
-    await this.#replyDirect({ event, observed, message });
+    if (observed?.direct) {
+      await this.#replyDirect({ event, observed, message });
+      return;
+    }
+    if (observed?.followUp) {
+      await this.#replyFollowUp({ event, message });
+    }
   }
 
   async #replyDirect({ event, observed, message }) {
@@ -323,6 +328,32 @@ export class WechatPersonalGroupBridge {
       await this.#recordBotMessage({ chatId: event.chatId, text: reply, groupName: event.groupName });
     } catch (error) {
       this.#logger.warn?.('[dsh-im:wechat-personal] direct reply failed:', error?.message ?? error);
+    }
+  }
+
+  /** 被 @ 后的连续对话窗口：未 @ 的群消息也自然接一句，延续聊天。 */
+  async #replyFollowUp({ event, message }) {
+    try {
+      const persona = await this.#persona();
+      const transcript = await this.#recentTranscript(event.chatId, message.id, event.groupName);
+      const sections = [];
+      if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
+      if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
+      sections.push(`群成员 ${event.senderName} 刚刚说：\n${event.text}`);
+      sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
+      const prompt = sections.join('\n\n');
+      const raw = await this.#generate({
+        kind: 'follow-up',
+        prompt,
+        meta: { chatId: event.chatId, senderId: event.senderId, channel: 'wechat-personal' },
+      });
+      const text = textOf(raw);
+      if (!text || text === SKIP_TOKEN || text.startsWith(SKIP_TOKEN)) return;
+      const reply = text.slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+      await this.#client.sendText({ threadId: event.chatId, text: reply });
+      await this.#recordBotMessage({ chatId: event.chatId, text: reply, groupName: event.groupName });
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] follow-up reply failed:', error?.message ?? error);
     }
   }
 
