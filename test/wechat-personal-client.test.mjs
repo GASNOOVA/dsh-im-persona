@@ -116,7 +116,7 @@ test('streamEvents parses SSE frames and yields normalized events', async () => 
   assert.equal(seen[1].kind, 'send.updated');
 });
 
-test('downloadMessageImage fetches an attachment through the media APIs', async () => {
+test('downloadMessageImage fetches an attachment through the media APIs', { skip: 'TODO(识图暂停)：识图能力暂缓' }, async () => {
   let mediaListCalls = 0;
   const { client, calls } = clientWith((url, options) => {
     if (url.endsWith('/messages/msg-img/media')) {
@@ -157,7 +157,7 @@ test('downloadMessageImage fetches an attachment through the media APIs', async 
   assert.match(contentCall.options.headers.Authorization, /^Bearer /u);
 });
 
-test('downloadMessageImage rejects messages without an image attachment', async () => {
+test('downloadMessageImage rejects messages without an image attachment', { skip: 'TODO(识图暂停)：识图能力暂缓' }, async () => {
   const { client } = clientWith((url) => {
     if (url.endsWith('/messages/msg-text/media')) return jsonResponse({ items: [] });
     throw new Error(`unexpected URL ${url}`);

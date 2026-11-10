@@ -319,27 +319,17 @@ export class WechatPersonalGroupBridge {
 
   async #handleGroupMessage(message) {
     const chatId = message.threadId;
-    let text = textOf(message.body);
-    let images = [];
-    if (!text && Number(message.type) === 3) {
-      try {
-        const image = await this.#client.downloadMessageImage?.(message.id);
-        if (image?.bytes?.byteLength) {
-          images = [{
-            name: image.name,
-            size: image.bytes.byteLength,
-            load: async () => image.bytes,
-          }];
-          text = '[图片]';
-        }
-      } catch (error) {
-        this.#logger.warn?.('[dsh-im:wechat-personal] unable to download image:', error?.message ?? error);
-      }
-    }
-    if (!text) return; // 文件/语音等非文本消息暂不进入群脑。
+    const text = textOf(message.body);
+    // TODO(识图暂停)：图片识图能力暂时下线，保留 agent-wechat 的媒体客户端代码待后续恢复。
+    // 原逻辑：正文为空且 type === 3 时，经 daemon 下载图片附件并作为 images 交给模型。
+    if (!text) return; // 图片/文件/语音等非文本消息暂不进入群脑。
     const group = await this.#groupInfo(chatId);
     const addressed = message.mentions?.self === true
       || (Array.isArray(message.mentions?.userIds) && message.mentions.userIds.includes(this.#ownUserId));
+    // 群成员回复机器人主动发言（含自动接话/主动发言）时，按一次「类 @」处理：
+    // 打开同一个连续对话窗口，并直接回复这条消息；没人回复就自然回到静默。
+    const quoted = message.quote ?? null;
+    const repliedToBot = quoted?.direction === 'outgoing' && quoted?.senderId === this.#ownUserId;
     const senderName = group.members.get(message.senderId) ?? textOf(message.senderId);
     const event = {
       chatId,
@@ -349,10 +339,10 @@ export class WechatPersonalGroupBridge {
       senderId: message.senderId,
       senderName,
       text,
-      mentionedBot: addressed,
+      mentionedBot: addressed || repliedToBot,
+      repliedToBot,
       at: Number.isFinite(Date.parse(message.createdAt ?? '')) ? Date.parse(message.createdAt) : this.#now(),
       kind: 'group',
-      ...(images.length > 0 ? { images } : {}),
     };
     let observed;
     try {
@@ -428,7 +418,6 @@ export class WechatPersonalGroupBridge {
       sameSender.event = {
         ...job.event,
         text: `${sameSender.event.text}\n${job.event.text}`,
-        images: [...(sameSender.event.images ?? []), ...(job.event.images ?? [])],
       };
       sameSender.message = job.message;
       sameSender.merged = (sameSender.merged ?? 1) + 1;
@@ -515,17 +504,15 @@ export class WechatPersonalGroupBridge {
       const sections = [];
       if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
-      sections.push(`群成员 ${event.senderName} 刚刚 @ 你：\n${event.text}`);
-      if (Array.isArray(event.images) && event.images.length > 0) {
-        sections.push('（对方还发送了一张图片，请结合图片内容回复。）');
-      }
+      const reason = event.repliedToBot ? '刚刚回复了你的消息' : '刚刚 @ 你';
+      sections.push(`群成员 ${event.senderName} ${reason}：\n${event.text}`);
+      // TODO(识图暂停)：恢复识图时，在 prompt 中加入「对方还发送了一张图片…」并把 images 传给 generate。
       if (blocks.length > 0) sections.push(...blocks);
       sections.push('请用纯文本直接回复（不要使用 Markdown 标记，不要输出解释过程）；回复要像群友聊天，简洁自然。');
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'direct',
         prompt,
-        images: event.images ?? [],
         meta: { chatId: event.chatId, senderId: event.senderId, channel: 'wechat-personal' },
       });
       const text = textOf(raw);
@@ -553,15 +540,12 @@ export class WechatPersonalGroupBridge {
       if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
       sections.push(`群成员 ${event.senderName} 刚刚说：\n${event.text}`);
-      if (Array.isArray(event.images) && event.images.length > 0) {
-        sections.push('（对方还发送了一张图片，请结合图片内容回复。）');
-      }
+      // TODO(识图暂停)：恢复识图时，在 prompt 中加入「对方还发送了一张图片…」并把 images 传给 generate。
       sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'follow-up',
         prompt,
-        images: event.images ?? [],
         meta: { chatId: event.chatId, senderId: event.senderId, channel: 'wechat-personal' },
       });
       const text = textOf(raw);

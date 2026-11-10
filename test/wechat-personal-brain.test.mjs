@@ -523,7 +523,7 @@ test('waits for the configured merge window before replying to a follow-up', asy
   }
 });
 
-test('an image message is downloaded and passed to the model as an image input', async () => {
+test('an image message is downloaded and passed to the model as an image input', { skip: 'TODO(识图暂停)：识图能力暂缓' }, async () => {
   const messages = [{
     id: 'msg-img',
     threadId: GROUP_ID,
@@ -574,6 +574,59 @@ test('an image message is downloaded and passed to the model as an image input',
     assert.match(prompts[0], /\[图片\]/u);
     assert.match(prompts[0], /对方还发送了一张图片/u);
     assert.equal(client.sent[0].text, '看到图啦。');
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a reply to the bot message opens the continuous conversation window', async () => {
+  const messages = [{
+    id: 'msg-quote',
+    threadId: GROUP_ID,
+    direction: 'incoming',
+    senderId: SENDER_ID,
+    body: '哈哈哈它在接我的梗',
+    createdAt: '2026-11-10T05:30:00+00:00',
+    mentions: { self: false, userIds: [] },
+    quote: {
+      direction: 'outgoing',
+      senderId: OWN_ID,
+      serverId: '1',
+      embeddedText: '本鱼才没有偷吃白饭',
+    },
+  }];
+  const client = fakeClient({
+    messages,
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [{ id: SENDER_ID, displayName: 'Zach' }] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }, { id: OWN_ID, displayName: '大肥鱼版' }],
+  });
+  client.events = [{ cursor: '9', kind: 'message.committed', payload: { messageId: 'msg-quote', direction: 'incoming' } }];
+  const brain = fakeBrain({ direct: true });
+  const prompts = [];
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain,
+    generate: async (request) => { prompts.push(request); return '我也觉得！'; },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 1, 'reply should be sent');
+    assert.equal(brain.observed[0].mentionedBot, true);
+    assert.equal(brain.observed[0].repliedToBot, true);
+    assert.match(prompts[0].prompt, /刚刚回复了你的消息/u);
+    assert.match(prompts[0].prompt, /哈哈哈它在接我的梗/u);
+    const sent = client.sent[0];
+    assert.equal(sent.threadId, GROUP_ID);
+    assert.equal(sent.text, '我也觉得！');
+    assert.deepEqual(sent.mentions, { userIds: [SENDER_ID] });
   } finally {
     await bridge.stop();
     await rm(home, { recursive: true, force: true });
