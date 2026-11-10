@@ -311,3 +311,47 @@ test('QQ runtime enables result-file delivery without per-bot configuration', as
   assert.equal(typeof onArtifact, 'function');
   await runtime.stop();
 });
+
+test('QQ runtime silently drops messages during DeepSeek peak hours when off-peak mode is enabled', async (t) => {
+  const bot = new FakeBot();
+  const asks = [];
+  let predicate;
+  const runtime = new QqRuntime({
+    config: { botId: 'qq_off_peak', appId: 'app', ownerUserOpenid: 'owner' },
+    appSecret: 'secret',
+    harness: {
+      ensureRunning: async () => true,
+      ask: async (_session, text) => { asks.push(text); return 'reply'; },
+    },
+    state: {
+      hasSeen: () => false,
+      markSeen: async () => {},
+      sessionFor: () => 'existing-session',
+      setSession: async () => {},
+      clearSession: async () => {},
+    },
+    createBot: () => bot,
+    typingMiddleware: ({ predicate: captured }) => { predicate = captured; return async () => {}; },
+    offPeak: { shouldBlock: () => true },
+    connectTimeoutMs: 100,
+    logger: { error() {}, warn() {}, info() {} },
+  });
+  t.after(() => runtime.stop());
+  await runtime.start();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(predicate({ message: { kind: 'c2c', senderId: 'owner', content: '<@app> 你好' } }), false);
+  bot.emit('message', {}, {
+    kind: 'c2c',
+    rawEventType: 'C2C_MESSAGE_CREATE',
+    senderId: 'owner',
+    senderIsBot: false,
+    content: '高峰期消息',
+    messageId: 'qq-off-peak-gate',
+    replyTarget: { scope: 'c2c', targetId: 'owner', msgId: 'qq-off-peak-gate' },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(asks, []);
+  assert.deepEqual(bot.sent, []);
+  assert.equal(runtime.status.ready, true, 'the connection must stay ready while messages are dropped');
+});

@@ -774,3 +774,122 @@ test('runtime retries a transient notifyStart failure before reporting the accou
   assert.equal(startCalls, 2);
   await runtime.stop();
 });
+
+test('runtime silently drops inbound messages during DeepSeek peak hours when off-peak mode is enabled', async () => {
+  const stopped = deferred();
+  const handled = [];
+  let polls = 0;
+  let savedBuf = null;
+  const runtime = new WeixinRuntime({
+    api: {
+      notifyStart: async () => {},
+      notifyStop: async () => {},
+      sendText: async () => assert.fail('a skipped message must not be answered'),
+      getUpdates: async ({ signal }) => {
+        polls += 1;
+        if (polls === 1) {
+          return {
+            ret: 0,
+            get_updates_buf: 'peak-skip',
+            msgs: [{
+              seq: 1,
+              message_id: 1,
+              message_type: 1,
+              from_user_id: 'owner',
+              context_token: 'peak-context',
+              item_list: [{ type: 1, text_item: { text: '高峰期消息' } }],
+            }],
+          };
+        }
+        return abortable(stopped.promise, signal);
+      },
+    },
+    config: {
+      botId: 'wx_off_peak',
+      baseUrl: 'https://ilinkai.weixin.qq.com/',
+      ownerUserId: 'owner',
+    },
+    token: 'bot-token',
+    harness: {
+      ensureRunning: async () => true,
+      ask: async () => { handled.push('ask'); return 'reply'; },
+    },
+    state: {
+      getUpdatesBuf: () => '',
+      setGetUpdatesBuf: (buf) => { savedBuf = buf; },
+      hasSeen: () => false,
+      markSeen: async () => {},
+      sessionFor: () => null,
+      setSession: async () => {},
+      clearSession: async () => {},
+    },
+    offPeak: { shouldBlock: () => true },
+    logger: { warn() {}, error() {}, info() {} },
+  });
+
+  await runtime.start();
+  await eventually(() => polls >= 2, 'monitor must keep polling while dropping messages');
+  assert.deepEqual(handled, []);
+  assert.equal(savedBuf, 'peak-skip', 'the update cursor must advance past dropped messages');
+  await runtime.stop();
+  stopped.resolve({ ret: 0, msgs: [] });
+});
+
+test('runtime keeps responding when off-peak mode is enabled outside peak hours', async () => {
+  const stopped = deferred();
+  const asks = [];
+  let polls = 0;
+  const runtime = new WeixinRuntime({
+    api: {
+      notifyStart: async () => {},
+      notifyStop: async () => {},
+      sendText: async () => {},
+      getUpdates: async ({ signal }) => {
+        polls += 1;
+        if (polls === 1) {
+          return {
+            ret: 0,
+            get_updates_buf: 'off-peak-run',
+            msgs: [{
+              seq: 2,
+              message_id: 2,
+              message_type: 1,
+              from_user_id: 'owner',
+              context_token: 'off-peak-context',
+              item_list: [{ type: 1, text_item: { text: '非高峰消息' } }],
+            }],
+          };
+        }
+        return abortable(stopped.promise, signal);
+      },
+    },
+    config: {
+      botId: 'wx_off_peak_active',
+      baseUrl: 'https://ilinkai.weixin.qq.com/',
+      ownerUserId: 'owner',
+    },
+    token: 'bot-token',
+    harness: {
+      ensureRunning: async () => true,
+      sessionExists: async () => true,
+      ask: async (_session, text) => { asks.push(text); return 'reply'; },
+    },
+    state: {
+      getUpdatesBuf: () => '',
+      setGetUpdatesBuf: () => {},
+      hasSeen: () => false,
+      markSeen: async () => {},
+      sessionFor: () => 'existing-session',
+      setSession: async () => {},
+      clearSession: async () => {},
+    },
+    offPeak: { shouldBlock: () => false },
+    logger: { warn() {}, error() {}, info() {} },
+  });
+
+  await runtime.start();
+  await eventually(() => asks.length > 0, 'off-peak inbound messages must reach the Harness');
+  assert.match(asks[0], /非高峰消息/u);
+  await runtime.stop();
+  stopped.resolve({ ret: 0, msgs: [] });
+});

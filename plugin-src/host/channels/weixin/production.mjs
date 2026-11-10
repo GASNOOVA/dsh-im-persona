@@ -2,6 +2,7 @@ import { getImageInputSettingsStore } from '../../../../src/channels/shared/imag
 import { getPersonaStore } from '../../../../src/channels/shared/persona-store.mjs';
 import { getPersonaLibrary } from '../../../../src/channels/shared/persona-library.mjs';
 import { resolvePersonaInjection } from '../../../../src/channels/shared/persona.mjs';
+import { getOffPeakSettingsStore } from '../../../../src/channels/shared/off-peak-settings-store.mjs';
 import { unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -112,6 +113,12 @@ export async function createProductionController(ctx, config = {}, internals = {
     ...(config.personaFile ? { personaFile: config.personaFile } : {}),
   });
   await personaLibrary.load();
+  // 闲时启用：全局开关决定 DeepSeek 高峰时段是否静默丢弃入站消息以省成本。
+  const offPeakSettings = internals.offPeakSettings
+    ?? getOffPeakSettingsStore({ dshHome: config.dshHome });
+  await offPeakSettings.get().catch((error) => {
+    logger.warn?.(`[dsh-im] unable to load off-peak settings: ${error?.message ?? error}`);
+  });
   const configStore = await new ConfigStore(paths.config).load();
   const { defaultWorkspace, ungroupedWorkspace } = await prepareBotWorkspace(config);
   const WorkspaceStore = internals.WorkspaceStore ?? BotWorkspaceStore;
@@ -205,6 +212,8 @@ export async function createProductionController(ctx, config = {}, internals = {
         contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
         // 渠道只依赖「已解析人设」：task-4 的人设库解析只改这里与 store。
         persona: { botId, getPersona: () => resolvePersonaInjection(personas.personaFor(botId), personaLibrary) },
+        // 闲时启用：同步判断当前是否应静默丢弃消息（高峰时段 + 开关开启）。
+        offPeak: { shouldBlock: (now = new Date()) => offPeakSettings.shouldBlockInbound(now) },
         accessPolicy: accessPolicyProvider(workspaces, botId, {
           channel: 'weixin', config: accountConfig,
         }),

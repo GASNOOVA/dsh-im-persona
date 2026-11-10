@@ -37,6 +37,7 @@ export class QqRuntime {
   #state;
   #contextEnhancement;
   #persona;
+  #offPeak;
   #groupHistory;
   #accessPolicy;
   #logger;
@@ -59,6 +60,7 @@ export class QqRuntime {
     state,
     contextEnhancement,
     persona,
+    offPeak,
     groupHistory,
     accessPolicy,
     logger = console,
@@ -76,6 +78,7 @@ export class QqRuntime {
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
     this.#persona = persona;
+    this.#offPeak = offPeak;
     this.#groupHistory = groupHistory;
     this.#accessPolicy = accessPolicy;
     this.#logger = logger; this.#diagnostics = createConnectionDiagnostics({ channel: 'qq', logger });
@@ -151,6 +154,18 @@ export class QqRuntime {
     return this.#bot.sendText(replyTarget, text);
   }
 
+  /**
+   * 闲时启用开启后，DeepSeek 高峰时段静默丢弃入站消息：不进入 Harness、
+   * 不回复、不消耗 token；QQ 连接与订阅照常保持。
+   */
+  #shouldBlockInbound() {
+    try {
+      return this.#offPeak?.shouldBlock?.() === true;
+    } catch {
+      return false;
+    }
+  }
+
   async start() {
     if (this.#status.ready && this.#bot) return this.status;
     if (this.#starting) return this.#starting;
@@ -217,6 +232,7 @@ export class QqRuntime {
     bot.use?.(this.#typingMiddleware({
       keepAlive: true,
       predicate: (ctx) => {
+        if (this.#shouldBlockInbound()) return false;
         const message = ctx?.message;
         if (!isQqMessageAddressed(message)) return false;
         if (!this.#accessPolicy) {
@@ -259,6 +275,13 @@ export class QqRuntime {
       }
     };
     const onMessage = (_ctx, message) => {
+      if (this.#shouldBlockInbound()) {
+        this.#logger.info?.(
+          `[dsh-im:qq] bot ${this.#config.botId} off-peak mode: skipped an inbound message `
+          + 'during DeepSeek peak hours',
+        );
+        return;
+      }
       const task = this.#bridge?.accept(message);
       if (!task) return;
       void task.catch((error) => {

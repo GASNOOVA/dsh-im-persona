@@ -119,6 +119,7 @@ export class WeixinRuntime {
   #state;
   #contextEnhancement;
   #persona;
+  #offPeak;
   #accessPolicy;
   #logger;
   #diagnostics;
@@ -140,6 +141,7 @@ export class WeixinRuntime {
     state,
     contextEnhancement,
     persona,
+    offPeak,
     accessPolicy,
     logger = console,
     diagnostics,
@@ -157,6 +159,7 @@ export class WeixinRuntime {
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
     this.#persona = persona;
+    this.#offPeak = offPeak;
     this.#accessPolicy = accessPolicy;
     this.#logger = logger;
     this.#diagnostics = diagnostics ?? createWeixinDiagnostics({ logger });
@@ -254,6 +257,19 @@ export class WeixinRuntime {
     }
   }
 
+  /**
+   * 闲时启用开启后，DeepSeek 高峰时段不把消息交给 Harness：不入会话、不回复、
+   * 不消耗 token，但平台轮询照常进行，非高峰恢复后立即继续服务。
+   * 判断本身是同步的（缓存值），因此不会阻塞消息热路径。
+   */
+  #shouldBlockInbound() {
+    try {
+      return this.#offPeak?.shouldBlock?.() === true;
+    } catch {
+      return false;
+    }
+  }
+
   async #runMonitor(signal) {
     let consecutiveFailures = 0;
     while (!signal.aborted) {
@@ -280,14 +296,26 @@ export class WeixinRuntime {
         this.#status.lastError = null;
         this.#status.connectionError = null;
 
-        for (const message of orderWeixinMessages(response?.msgs)) {
-          void this.#bridge.accept(message).catch((error) => {
-            if (signal.aborted) return;
-            this.#logger.error?.(
-              `[dsh-weixin] account ${this.#config.botId} message handling failed:`,
-              error,
+        const blockedByOffPeak = this.#shouldBlockInbound();
+        const pendingMessages = orderWeixinMessages(response?.msgs);
+        if (blockedByOffPeak) {
+          // 静默丢弃：消息不会进入 Harness，也不会产生任何回复或会话记录。
+          if (pendingMessages.length > 0) {
+            this.#logger.info?.(
+              `[dsh-weixin] account ${this.#config.botId} off-peak mode: skipped `
+              + `${pendingMessages.length} inbound message(s) during DeepSeek peak hours`,
             );
-          });
+          }
+        } else {
+          for (const message of pendingMessages) {
+            void this.#bridge.accept(message).catch((error) => {
+              if (signal.aborted) return;
+              this.#logger.error?.(
+                `[dsh-weixin] account ${this.#config.botId} message handling failed:`,
+                error,
+              );
+            });
+          }
         }
         if (typeof response?.get_updates_buf === 'string' && response.get_updates_buf) {
           await this.#state.setGetUpdatesBuf(response.get_updates_buf);
