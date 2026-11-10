@@ -66,9 +66,9 @@ export function getImHostLanguage() {
 
 /**
  * Observe committed changes to the host message language. Platform-side
- * surfaces that were localized once at connect time (the Telegram command
- * menu, for example) re-synchronize from here instead of waiting for a
- * reconnect. Subscribers must not throw; the disposer is idempotent.
+ * surfaces that were localized once at connect time re-synchronize from here
+ * instead of waiting for a reconnect. Subscribers must not throw; the
+ * disposer is idempotent.
  */
 export function onImHostLanguageChange(listener) {
   if (typeof listener !== 'function') {

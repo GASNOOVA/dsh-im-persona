@@ -20,6 +20,7 @@ import {
 import { createPollScheduler, useAnimationFrameScheduler } from '../../lifecycle.js';
 import { WorkspaceEditor } from '../../workspace-editor.js';
 import { ContextEnhancementEditor } from '../../context-enhancement.js';
+import { PersonaEditor } from '../../persona-settings.js';
 import {
   AgentPresetCatalogContext,
   AgentPresetEditor,
@@ -31,6 +32,7 @@ import {
   ModelEditor,
 } from '../../model-setting.js';
 import { useWorkspaceSnapshotFence } from '../../workspace-snapshot-fence.js';
+import { PERSONA_ENDPOINTS } from '../../../../src/channels/shared/persona.mjs';
 import {
   BotSettingsButton,
   BotStatusMeta,
@@ -220,6 +222,7 @@ export function AccountCard({
   onModelSave,
   onAgentPresetSave,
   onContextEnhancementSave,
+  onPersonaSave,
   onRequestRemove,
   onConfirmRemove,
   onCancelRemove,
@@ -279,6 +282,11 @@ export function AccountCard({
         disabled: Boolean(busy),
         onSave: onContextEnhancementSave,
       }),
+      h(PersonaEditor, {
+        persona: account.persona,
+        disabled: Boolean(busy),
+        onSave: onPersonaSave,
+      }),
       h('div', { className: 'dxw-accountFooter dim-cardFooter' },
         h('div', { className: 'dim-cardFooterLayout' },
           h('div', { className: 'dxw-actions dim-cardActions' },
@@ -327,6 +335,7 @@ function AccountList(props) {
         onModelSave: (model) => props.onModelSave(account, model),
         onAgentPresetSave: (agentPreset) => props.onAgentPresetSave(account, agentPreset),
         onContextEnhancementSave: (config) => props.onContextEnhancementSave(account, config),
+        onPersonaSave: (persona) => props.onPersonaSave(account, persona),
         onRequestRemove: () => props.onRequestRemove(account),
         onConfirmRemove: () => props.onConfirmRemove(account),
         onCancelRemove: props.onCancelRemove,
@@ -349,7 +358,7 @@ export function mergeWeixinProvisioningSnapshot(
   };
 }
 
-export function WeixinSettingsTab({ rpcCall }) {
+export function WeixinSettingsTab({ rpcCall, personaRpcCall }) {
   const [model, setModel] = React.useState({
     phase: 'loading', bots: [], totals: EMPTY_TOTALS, revision: 0, error: null,
     agentPresetCatalog: EMPTY_AGENT_PRESET_CATALOG,
@@ -683,6 +692,35 @@ export function WeixinSettingsTab({ rpcCall }) {
     }
   }, [invoke, loadStatus, setBotBusy, workspaceFence]);
 
+  const savePersona = React.useCallback(async (account, persona) => {
+    // Persona has its own management channel and returns { persona } instead of
+    // the channel status snapshot, so it cannot reuse saveBotSetting.
+    setBotBusy(account.botId, 'persona');
+    setFeedbackByBot((current) => ({ ...current, [account.botId]: null }));
+    try {
+      if (typeof personaRpcCall !== 'function') {
+        throw new Error('无法读取或保存人设设置，请稍后重试。');
+      }
+      const value = unwrapRpcResult(await personaRpcCall(
+        PERSONA_ENDPOINTS.set,
+        { botId: account.botId, persona },
+      ));
+      if (mountedRef.current) {
+        setModel((current) => ({
+          ...current,
+          bots: current.bots.map((bot) => (bot.botId === account.botId
+            ? { ...bot, persona: value.persona }
+            : bot)),
+        }));
+      }
+    } catch (error) {
+      if (mountedRef.current) setFeedbackByBot((current) => ({ ...current, [account.botId]: presentError(error) }));
+      throw error;
+    } finally {
+      if (mountedRef.current) setBotBusy(account.botId, null);
+    }
+  }, [personaRpcCall, setBotBusy]);
+
   const remove = React.useCallback(async (account) => {
     const snapshotVersion = workspaceFence.beginMutation();
     setBotBusy(account.botId, 'delete');
@@ -792,6 +830,7 @@ export function WeixinSettingsTab({ rpcCall }) {
                   onContextEnhancementSave: (account, config) => saveBotSetting(
                     account, 'context-enhancement', WEIXIN_ENDPOINTS.setContextEnhancement, { config },
                   ),
+                  onPersonaSave: (account, persona) => savePersona(account, persona),
                   onRequestRemove: (account) => setRemoveTarget(account.botId),
                   onConfirmRemove: (account) => void remove(account),
                   onCancelRemove: () => setRemoveTarget(null),

@@ -7,6 +7,6 @@
   "exports": { ".": "./host.js", "./client": "./client.js", "./package.json": "./package.json" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "inject": ["@xmanrui/dsh-im", "dsh-tauri"] }
+    "client": { "platform": "web", "inject": ["dsh-im-persona", "dsh-tauri"] }
   }
 }

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { IM_LOCALE_NAMESPACE } from './i18n.js';
 
-export const IM_MAIN_PANEL_ID = 'xmanrui-dsh-im';
+export const IM_MAIN_PANEL_ID = 'dsh-im-persona';
 const h = React.createElement;
 
 function OpenImAction({ subject, packageName, onOpen, t }) {
@@ -73,7 +73,7 @@ export function installImPluginPage(ctx, { packageName, renderPanel, sidebarVisi
       update();
       const stopActions = pageCtx.slots.inject('plugins.detail.actions', () =>
         pageCtx.slots.register({
-          name: 'plugins.detail.actions', id: 'xmanrui-dsh-im-open',
+          name: 'plugins.detail.actions', id: 'dsh-im-persona-open',
           order: 20, locale: IM_LOCALE_NAMESPACE,
           inject: () => ({
             packageName,

@@ -1,4 +1,5 @@
 import { enhanceContextContent } from './context-enhancement.mjs';
+import { injectPersonaContent } from './persona.mjs';
 import { t } from './i18n.mjs';
 import manifest from '../../../package.json' with { type: 'json' };
 
@@ -39,7 +40,7 @@ export function isControlCommand(text) {
 // Shared by explicit /steer and ordinary messages configured to steer. A false
 // result guarantees no submission; exceptions must never trigger a second ask.
 export async function steerMessage(text, harness, state, key, {
-  signal, control, enhancement, pendingInteraction = false,
+  signal, control, enhancement, persona, pendingInteraction = false,
 } = {}) {
   if (pendingInteraction) return false;
   const session = boundSession(harness, state, key);
@@ -47,9 +48,12 @@ export async function steerMessage(text, harness, state, key, {
   if (typeof session.steerActiveTurn !== 'function') {
     throw new TypeError('Harness session does not support steering active turns');
   }
-  const steering = enhancement
+  const enhanced = enhancement
     ? enhanceContextContent(text, enhancement.snapshot, enhancement.source)
     : text;
+  // A mid-turn correction is a user instruction entering the Harness, so it
+  // carries the bot's persona just like an ordinary message does.
+  const steering = persona ? injectPersonaContent(enhanced, persona) : enhanced;
   return session.steerActiveTurn(steering, control, requestOptions(signal));
 }
 
@@ -60,6 +64,7 @@ export async function runControlCommand(text, harness, state, key, {
   control,
   deferredDelivery,
   enhancement,
+  persona,
 } = {}) {
   if (!isControlCommand(text)) return null;
   const command = text.trim();
@@ -70,7 +75,7 @@ export async function runControlCommand(text, harness, state, key, {
 
   if (version) {
     return /^\/version$/iu.test(command)
-      ? commandResult(`dsh-im v${manifest.version}`)
+      ? commandResult(`dsh-im-persona v${manifest.version}`)
       : commandResult(t(VERSION_USAGE));
   }
 
@@ -112,7 +117,7 @@ export async function runControlCommand(text, harness, state, key, {
   // A mid-turn correction carries the same provenance as the message that
   // opened the turn, so a group member who steers is identified too.
   const steered = await steerMessage(instruction, harness, state, key, {
-    signal, control, enhancement,
+    signal, control, enhancement, persona,
   });
   return steered
     ? commandResult(t('已提交补充指令，Agent 会在下一步读取。'))

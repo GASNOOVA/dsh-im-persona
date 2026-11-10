@@ -7,10 +7,7 @@ import { BotWorkspaceStore, createWorkspaceAwareController, createBotWorkspaceSc
 import { SET_MESSAGE_MODE_ENDPOINT } from '../src/channels/shared/message-mode.mjs';
 
 const CHANNELS = [
-  ['wecom', 'Wecom'], ['weixin', 'Weixin'], ['feishu', 'Feishu'], ['dingtalk', 'Dingtalk'],
-  ['qq', 'Qq'], ['slack', 'Slack'], ['telegram', 'Telegram'], ['discord', 'Discord'],
-  ['whatsapp', 'Whatsapp'], ['wecom-app', 'WecomApp'], ['imessage', 'IMessage'],
-  ['email', 'Email'], ['matrix', 'Matrix'],
+  ['weixin', 'Weixin'], ['qq', 'Qq'],
 ];
 
 async function fixture(t) {

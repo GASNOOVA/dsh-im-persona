@@ -1,18 +1,6 @@
 import { installGroupHistoryTools } from '../../src/channels/shared/group-history-access.mjs';
-import { apply as applyDingtalk } from './channels/dingtalk/index.mjs';
-import { apply as applyDiscord } from './channels/discord/index.mjs';
-import { apply as applyOffice } from './channels/office/index.mjs';
-import { apply as applyFeishu } from './channels/feishu/index.mjs';
 import { apply as applyQq } from './channels/qq/index.mjs';
-import { apply as applySlack } from './channels/slack/index.mjs';
-import { apply as applyTelegram } from './channels/telegram/index.mjs';
-import { apply as applyWecom } from './channels/wecom/index.mjs';
-import { apply as applyWecomApp } from './channels/wecom-app/index.mjs';
 import { apply as applyWeixin } from './channels/weixin/index.mjs';
-import { apply as applyWhatsapp } from './channels/whatsapp/index.mjs';
-import { apply as applyIMessage } from './channels/imessage/index.mjs';
-import { apply as applyEmail } from './channels/email/index.mjs';
-import { apply as applyMatrix } from './channels/matrix/index.mjs';
 import { installOutboundArtifactTool } from '../../src/channels/shared/semantic/artifact.mjs';
 import { installHostLanguage } from './host-language.mjs';
 import { installHostLanguageRpc } from './host-language-rpc.mjs';
@@ -29,10 +17,10 @@ import { installSessionSyncCoordinator } from './session-sync-coordinator.mjs';
 import { deliverySwitchesOff } from '../../src/channels/shared/delivery-sync-settings.mjs';
 import { getDeliverySyncSettingsStore } from '../../src/channels/shared/delivery-sync-settings-store.mjs';
 import { installSessionTitlePrefix } from './session-title-prefix.mjs';
-import { installUpdateRpc } from './update-rpc.mjs';
 import { installChannelListRpc } from './channel-list-rpc.mjs';
+import { installPersonaRpc } from './persona-rpc.mjs';
 
-export const name = 'dsh-im-host';
+export const name = 'dsh-im-persona-host';
 export const inject = [
   'connection',
   'credentials',
@@ -45,54 +33,35 @@ function channelConfig(config, name, deliveryService) {
     ...(config.groupByAgentPreset === undefined ? {} : { groupByAgentPreset: config.groupByAgentPreset }),
     ...config[name],
   };
+  // 顶层 config.personaFile 作为共享的人设库 config 条目；渠道级配置可覆盖。
+  if (config.personaFile !== undefined && channel.personaFile === undefined) {
+    channel.personaFile = config.personaFile;
+  }
   const withAuthority = config.rpcAuthority === undefined
     ? channel
     : { ...channel, rpcAuthority: config.rpcAuthority };
-  return name === 'office' ? withAuthority : { ...withAuthority, deliveryService };
+  return { ...withAuthority, deliveryService };
 }
 
 export function createImHostPlugin(internals = {}) {
   const startHostLanguage = internals.installHostLanguage ?? installHostLanguage;
   const startHostLanguageRpc = internals.installHostLanguageRpc ?? installHostLanguageRpc;
-  const startUpdate = internals.installUpdateRpc ?? installUpdateRpc;
   const startInboundTtl = internals.installInboundTtlRpc ?? installInboundTtlRpc;
   const startDeliverySync = internals.installDeliverySyncRpc ?? installDeliverySyncRpc;
   const startSidebarSettings = internals.installSidebarSettingsRpc ?? installSidebarSettingsRpc;
   const startInjectedContext = internals.installInjectedContext ?? installInjectedContext;
+  const startPersonaRpc = internals.installPersonaRpc ?? installPersonaRpc;
   const startDelivery = internals.installDeliveryRpc ?? installDeliveryRpc;
   const startDeliveryHttp = internals.installDeliveryHttp ?? installDeliveryHttp;
   const startSessionSync = internals.installSessionSyncCoordinator
     ?? installSessionSyncCoordinator;
   const makeDeliveryService = internals.createDeliveryService ?? createDeliveryService;
-  const startFeishu = internals.applyFeishu ?? applyFeishu;
   const startWeixin = internals.applyWeixin ?? applyWeixin;
-  const startDingtalk = internals.applyDingtalk ?? applyDingtalk;
-  const startWecom = internals.applyWecom ?? applyWecom;
-  const startWecomApp = internals.applyWecomApp ?? applyWecomApp;
   const startQq = internals.applyQq ?? applyQq;
-  const startSlack = internals.applySlack ?? applySlack;
-  const startTelegram = internals.applyTelegram ?? applyTelegram;
-  const startDiscord = internals.applyDiscord ?? applyDiscord;
-  const startOffice = internals.applyOffice ?? applyOffice;
-  const startWhatsapp = internals.applyWhatsapp ?? applyWhatsapp;
-  const startIMessage = internals.applyIMessage ?? applyIMessage;
-  const startEmail = internals.applyEmail ?? applyEmail;
-  const startMatrix = internals.applyMatrix ?? applyMatrix;
+  // Personal edition: only Weixin and QQ are supported channels.
   const channels = [
-    ['feishu', startFeishu],
     ['weixin', startWeixin],
-    ['dingtalk', startDingtalk],
-    ['wecom', startWecom],
-    ['wecomApp', startWecomApp],
     ['qq', startQq],
-    ['slack', startSlack],
-    ['telegram', startTelegram],
-    ['discord', startDiscord],
-    ['whatsapp', startWhatsapp],
-    ['imessage', startIMessage],
-    ['email', startEmail],
-    ['matrix', startMatrix],
-    ['office', startOffice],
   ];
   return Object.freeze({
     name,
@@ -100,16 +69,15 @@ export function createImHostPlugin(internals = {}) {
     async apply(ctx, config = {}) {
       const unavailableSessionSyncChannels = channels
         .map(([channel]) => channel)
-        .filter((channel) => channel !== 'office'
-          && config[channel]?.harnessBaseUrl !== undefined);
+        .filter((channel) => config[channel]?.harnessBaseUrl !== undefined);
       const deliveryService = makeDeliveryService({
-        unavailableSessionSyncChannels: unavailableSessionSyncChannels.map((channel) => channel === 'wecomApp' ? 'wecom-app' : channel),
+        unavailableSessionSyncChannels,
         dsBot: createDsBotClient(ctx),
       });
       // The delivery switches are the master for everything that follows a Session
       // through its targets: with both off, `listSessionSyncTargets` answers empty,
-      // so neither the coordinator nor a channel's own mirror (Feishu card) sends.
-      // A settings read failure must not disable delivery, so it falls through.
+      // so the coordinator sends nothing. A settings read failure must not disable
+      // delivery, so it falls through.
       if (typeof deliveryService.listSessionSyncTargets === 'function') {
         const rawListSessionSyncTargets = deliveryService.listSessionSyncTargets.bind(deliveryService);
         deliveryService.listSessionSyncTargets = async (sessionId) => {
@@ -223,11 +191,6 @@ export function createImHostPlugin(internals = {}) {
         }
       }
       try {
-        startUpdate(ctx, { authority: config.rpcAuthority });
-      } catch (error) {
-        logger.error?.('[dsh-im] failed to activate update management; continuing with channels', error);
-      }
-      try {
         startSidebarSettings(ctx, { config });
       } catch (error) {
         logger.error?.('[dsh-im] failed to activate sidebar settings; continuing with channels', error);
@@ -247,6 +210,11 @@ export function createImHostPlugin(internals = {}) {
         installChannelListRpc(ctx, config.rpcAuthority, { dshHome: config.dshHome });
       } catch (error) {
         logger.error?.('[dsh-im] failed to activate channel list; continuing with channels', error);
+      }
+      try {
+        startPersonaRpc(ctx, { authority: config.rpcAuthority, config });
+      } catch (error) {
+        logger.error?.('[dsh-im] failed to activate persona settings; continuing with channels', error);
       }
     }
     const failures = [];

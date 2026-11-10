@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { FeishuSettingsTab } from '../../plugin-src/client/channels/feishu/index.js';
+import { QqSettingsTab } from '../../plugin-src/client/channels/qq/index.js';
 import { installImStyles } from '../../plugin-src/client/styles.js';
 import { en, setImTranslator } from '../../plugin-src/client/i18n.js';
 
@@ -30,7 +30,7 @@ let snapshot = {
     { id: 'simple', name: 'Simple model', description: 'A model without configurable reasoning' },
   ] }], failures: [] },
   bots: [0, 1].map((index) => ({
-    botId: `feishu_${index}`, configured: true, connected: true, state: 'connected',
+    botId: `qq_${index}`, configured: true, connected: true, state: 'connected',
     workspace: '/workspace/dsh-im', agentPreset: '',
     model: index === 0 ? { provider: 'deepseek', model: 'deepseek-v4-pro', reasoningEffort: 'high' } : null,
     bot: { name: index === 0 ? '研发助手' : '日常助手', appIdMasked: 'cli_demo•••' },
@@ -52,7 +52,7 @@ async function rpcCall(endpoint, payload) {
   return { ok: true, value: snapshot };
 }
 createRoot(document.getElementById('app')).render(h('div', { className: 'dim-page' },
-  h('section', { className: 'dim-panel' }, h(FeishuSettingsTab, { rpcCall }))));
+  h('section', { className: 'dim-panel' }, h(QqSettingsTab, { rpcCall }))));
 
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const tick = () => new Promise((done) => setTimeout(done, 20));
@@ -60,7 +60,7 @@ async function until(predicate, message) {
   const deadline = Date.now() + 3000;
   while (!predicate()) { if (Date.now() > deadline) throw new Error(message); await tick(); }
 }
-const card = () => document.querySelector('[data-bot-id="feishu_0"]');
+const card = () => document.querySelector('[data-bot-id="qq_0"]');
 const row = (label) => [...card().querySelectorAll('.dim-modelRow')]
   .find((button) => button.getAttribute('aria-label') === label);
 const menu = () => card().querySelector('.dim-modelMenu');

@@ -1,46 +1,34 @@
 {
-  "name": "@xmanrui/dsh-im",
-  "version": "5.10.0",
+  "name": "dsh-im-persona",
+  "version": "5.10.0-personal.0",
   "icon": "./assets/logo-plugin-message-link-gradient.webp",
-  "description": "把微信、飞书、企微、钉钉、QQ、Telegram、WhatsApp、Slack、Discord、Matrix接入DSH。 Connect Telegram, WhatsApp, Slack, Discord, Matrix, WeChat, Feishu, WeCom, DingTalk, and QQ to DSH.",
+  "description": "个人定制版 IM 机器人：把微信与 QQ 接入 DeepSeek Harness，支持为每个机器人配置角色人设（基于 @xmanrui/dsh-im 5.10.0 独立改造）。Personal-edition IM bot for DSH: WeChat and QQ only, with per-bot persona.",
   "keywords": [
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
-    "ai-agent",
+    "dsh-im-persona",
     "im",
-    "instant-messaging",
-    "chatbot",
-    "feishu",
-    "lark",
     "wechat",
-    "wecom",
-    "dingtalk",
     "qq",
-    "slack",
-    "telegram",
-    "discord",
-    "whatsapp",
-    "imessage",
-    "matrix",
-    "ai-office"
+    "persona",
+    "chatbot",
+    "ai-agent",
+    "personal-edition"
   ],
-  "author": "xmanrui (https://github.com/xmanrui)",
+  "author": "Cheng Chen",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xmanrui/dsh-im.git"
+    "url": "git+https://github.com/GASNOOVA/dsh-im-persona.git"
   },
-  "homepage": "https://github.com/xmanrui/dsh-im#readme",
+  "homepage": "https://github.com/GASNOOVA/dsh-im-persona#readme",
   "bugs": {
-    "url": "https://github.com/xmanrui/dsh-im/issues"
-  },
-  "publishConfig": {
-    "access": "public"
+    "url": "https://github.com/GASNOOVA/dsh-im-persona/issues"
   },
   "bin": {
-    "dsh-im": "bin/dsh-im.mjs"
+    "dsh-im-persona": "bin/dsh-im-persona.mjs"
   },
   "main": "./lib/index.js",
   "exports": {
@@ -56,22 +44,12 @@
     "lib",
     "locale/*.json",
     "plugin-src",
-    "scripts/telegram-menu-scopes.mjs",
-    "scripts/verify-interface-language.mjs",
-    "scripts/verify-injected-context.mjs",
-    "scripts/verify-lan-management.mjs",
-    "scripts/verify-model-setting.mjs",
-    "scripts/verify-package.mjs",
-    "scripts/verify-session-channel-logos.mjs",
-    "scripts/verify-session-title-prefix.mjs",
     "src",
+    "scripts",
+    "docs",
     "PROACTIVE_DELIVERY.md",
-    "PROACTIVE_DELIVERY.en.md",
-    "docs/client-integration.md",
-    "docs/preset-workspaces.md",
     "LICENSE",
     "README.md",
-    "README.en.md",
     "THIRD_PARTY_NOTICES.md"
   ],
   "dsh": {
@@ -91,8 +69,8 @@
     "compatibility": {
       "dsh": "0.2.1-rc.2",
       "dshReleases": {
-        "0.2.0-rc.2": "compatible",
-        "0.2.1-rc.2": "compatible"
+        "0.2.1-rc.2": "compatible",
+        "0.2.2-rc.1": "compatible"
       },
       "profiles": [
         "web"
@@ -102,33 +80,25 @@
   "scripts": {
     "build": "node plugin-src/client/build.mjs && node plugin-src/host/build.mjs",
     "test": "node --test test/*.test.mjs test/channels/*/*.test.mjs",
+    "verify:trim": "node scripts/verify-channel-trim.mjs",
     "check": "npm run build && npm test && node scripts/verify-package.mjs"
   },
   "engines": {
+    "dsh": ">=0.2.1-rc.2",
     "node": ">=22.19"
   },
   "dependencies": {
-    "@matrix-org/olm": "3.2.15",
     "@tencent-connect/qqbot-connector": "1.2.0",
     "@tencent-connect/qqbot-nodejs": "1.0.4",
-    "@wecom/aibot-node-sdk": "1.0.7",
-    "dingtalk-stream": "2.1.4",
-    "imapflow": "^2.0.5",
-    "mailparser": "^3.9.43",
-    "nodemailer": "^10.1.4",
     "qrcode": "1.5.4",
     "undici": "7.30.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
-    "@larksuiteoapi/node-sdk": "1.73.0",
-    "@whiskeysockets/baileys": "7.0.0-rc14",
     "esbuild": "0.25.9",
-    "https-proxy-agent": "5.0.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-test-renderer": "18.3.1",
-    "semver": "7.8.5"
+    "react-test-renderer": "18.3.1"
   },
   "directories": {
     "doc": "docs",
@@ -136,7 +106,6 @@
     "test": "test"
   },
   "optionalDependencies": {
-    "@tencent-qqmail/agently-cli": "^1.0.18",
     "sharp": "0.35.5"
   }
 }

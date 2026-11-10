@@ -1,10 +1,8 @@
 # 主动投递使用指南
 
-**简体中文** · [English](PROACTIVE_DELIVERY.en.md)
-
 主动投递让应用在没有用户新消息的情况下，通过已经接入 DSH-IM 的机器人发送文字消息。调用方只需保存一组稳定的 `botId + targetId`，不需要保存 Harness `sessionId`、聊天引用、消息 ID 或临时 Webhook。
 
-九个内置渠道均支持主动投递：微信、飞书、钉钉、企业微信、QQ、Slack、Telegram、Discord 和 WhatsApp。
+个人版支持主动投递的两个渠道：**微信**与 **QQ**。
 
 ## 快速开始
 
@@ -65,33 +63,32 @@
 }
 ```
 
-### 配置示例：飞书告警群
+### 配置示例：QQ 群告警
 
-假设飞书机器人已经在告警群中收到过消息：
+假设 QQ 机器人已经在目标群中被 @ 过：
 
 1. 打开该机器人的设置页并复制 `Bot ID`。
-2. 点击「新建目标」，在下拉框中选择告警群。
+2. 点击「新建目标」，在下拉框中选择目标群。
 3. 将自动生成的 `Target ID` 改为 `release-alerts`，显示名称填为「发布告警群」。
-4. 确认目标类型为「群聊」，群 Chat ID 已自动填入。
-5. 点击「测试」，到飞书群中确认测试消息。
+4. 确认目标类型为「群聊」，群 Open ID 已自动填入。
+5. 点击「测试」，到 QQ 群中确认测试消息。
 6. 点击「保存目标」，再点击「复制调用参数」。
 
-以后即使编辑并更换群 Chat ID，调用方仍可继续使用同一组 `botId + release-alerts`。
+以后即使编辑并更换群 Open ID，调用方仍可继续使用同一组 `botId + release-alerts`。
 
 ## 会话双向同步
 
-会话同步不需要预先创建投递目标：地址取自 Session 当前的聊天绑定，也就是这个 Session 在某个已接入聊天里的会话键（私聊、群聊、Slack Thread、Telegram Topic、Discord 频道等）。是否同步由「通用设置 → 投递」决定，这是唯一的开关位置；「投递目标」页只服务于手动投递，以及同步审批和同步提问的候选范围。
+会话同步不需要预先创建投递目标：地址取自 Session 当前的聊天绑定，也就是这个 Session 在某个已接入聊天里的会话键（微信私聊、QQ 私聊或群聊）。是否同步由「通用设置 → 投递」决定，这是唯一的开关位置；「投递目标」页只服务于手动投递，以及同步审批和同步提问的候选范围。
 
 1. 在该聊天里的普通提问和 `/steer` 仍走原回复链，不会被同步逻辑重复发送或转发到其他目标。
 2. 其他来源的 Turn 成功完成后，只投递**最终回答**——最后一次工具调用之后的文字，而不是各 step 拼接的全文，也不是工具调用之前的寒暄：Web GUI 中提交的 Turn、定时任务（`schedule`、`deliveryMode: host`）、待答问题回执，以及 `subagent-settled` 等内部通知发起的 Turn。
 3. 是否把 Web 中输入的文字本身也镜像到聊天、是否投递模型回答，由「通用设置 → 投递」决定；两个前缀图标分别作用于镜像的输入与模型回答。
 4. 只有读者自己在 Web GUI 里提交的文字才会被镜像：Host 注入的上下文快照、定时提醒和内部通知都不会回显，只投递模型回答。镜像发送失败时，该 Turn 的回答也不再投递。
-5. 渠道自己渲染回答时（飞书过程卡片），卡片就是这次投递：最终回答写在卡片里，只有卡片没能确认，才补发一条纯文字。同一条回答因此只会到达聊天一次，不会既在卡片里又以文字重发一遍。两个全局开关关闭时，卡片与文字一起停发，因为两者读的是同一份开关。
-6. 地址在每次投递前从当前绑定读取，因此自动跟随 `/session` 切换与 `/new`；没有绑定的 Session 不会投递，也不会报错，但会写一条不含消息正文的日志（Session、渠道与会话 Key），方便排查为什么聊天没有收到内容。
+5. 地址在每次投递前从当前绑定读取，因此自动跟随 `/session` 切换与 `/new`；没有绑定的 Session 不会投递，也不会报错，但会写一条不含消息正文的日志（Session、渠道与会话 Key），方便排查为什么聊天没有收到内容。
 
 服务注入不会决定 Turn 的来源：Host 在每个 Turn 前注入的上下文快照、定时提醒与内部通知只是「这是本 Turn 的一条消息」，不会把 Turn 判成服务发起的。只有整个 Turn 都没有一条来自读者（Web 或本聊天）的消息时，才按服务发起的 Turn 投递回答；只要其中一条消息来自本聊天，该 Turn 就由聊天自己回答，同步逻辑完全不投递。
 
-投递目标行上原有的「会话双向同步」开关现在只影响同步审批与同步提问的候选范围，不再是会话同步的前提；这个候选范围仍然只限私聊：镜像文字可以跟随渠道持久化的任意路由（群聊、Slack Thread、Telegram Topic、Discord 频道），但同步审批与同步提问只在私聊中提出，因为在群里任何成员都能替读者作答。首版仅同步当前 Host 的文字，不同步图片、文件、卡片、工具过程、审批或历史消息。显式配置了远程 `harnessBaseUrl` 的渠道也不支持。
+投递目标行上的「会话双向同步」开关只影响同步审批与同步提问的候选范围，不再是会话同步的前提；这个候选范围仍然只限私聊：镜像文字可以跟随渠道持久化的任意路由（微信私聊、QQ 私聊/群聊），但同步审批与同步提问只在私聊中提出，因为在群里任何成员都能替读者作答。首版仅同步当前 Host 的文字，不同步图片、文件、卡片、工具过程、审批或历史消息。显式配置了远程 `harnessBaseUrl` 的渠道也不支持。
 
 ## 投递设置
 
@@ -115,28 +112,15 @@
 
 同机设置页通过 `settings.delivery-sync.get` / `settings.delivery-sync.set` 读写这份设置（`set` 只应用传入的字段，四个字段都可选）。消息语言通过 `settings.language.set` 在「跟随 DSH 界面语言」与 `zh`／`en`／`ru` 之间切换：显式选择优先于 DSH 界面语言，插件 `language` 选项仍然优先于两者。
 
-## 九渠道手动填写字段
+## 手动填写字段
 
 优先从已聊会话中选择。只有目标未出现在候选中时，才需要手动取得以下平台原生 ID。
 
 | 渠道 | 目标类型 | 需要填写的字段 | 示例或说明 |
 | --- | --- | --- | --- |
 | 微信 | `user` | 微信用户 ID（`toUserId`） | 填写接收消息的微信用户 ID |
-| 飞书 | `user` | Open ID（`openId`） | 例如 `ou_xxx` |
-| 飞书 | `group` | 群 Chat ID（`chatId`） | 例如 `oc_xxx` |
-| 钉钉 | `user` | 用户 ID（`userId`） | 填写钉钉用户 ID |
-| 钉钉 | `group` | 群 Open Conversation ID（`openConversationId`） | 主动投递不使用临时 `sessionWebhook` |
-| 企业微信 | `user` | 用户 ID（路由字段为 `chatId`） | 私聊填写用户 ID |
-| 企业微信 | `group` | 群 Chat ID（`chatId`） | 群聊填写群 `chatid` |
 | QQ | `user` | 用户 Open ID（`userOpenId`） | 平台提供的 `user_openid` |
 | QQ | `group` | 群 Open ID（`groupOpenId`） | 平台提供的 `group_openid` |
-| Slack | `conversation` | Channel ID（`channelId`） | 例如 `C0123456789` |
-| Slack | `thread` | Channel ID + Thread 时间戳（`channelId`, `threadTs`） | 例如 `1712345678.123456` |
-| Telegram | `chat` | Chat ID（`chatId`） | 十进制字符串，例如 `-1001234567890` |
-| Telegram | `topic` | Chat ID + Topic ID（`chatId`, `messageThreadId`） | Topic ID 必须是正整数 |
-| Discord | `channel` | Channel ID（`channelId`） | 私信、频道和 Thread 都使用可发消息的 Channel ID |
-| WhatsApp | `user` | 用户 JID（`jid`） | 例如 `8613800000000@s.whatsapp.net` |
-| WhatsApp | `group` | 群 JID（`jid`） | 例如 `1234567890-123456@g.us` |
 
 平台 ID 字符串不能为空或带首尾空格。一个目标只接受所选渠道和类型要求的字段，额外字段会被拒绝。
 
@@ -203,20 +187,10 @@ await ctx.dshIm.send(botId, targetId, '# 每日报告\n\n**检查完成**', {
 
 | 渠道 | Markdown 呈现方式 |
 | --- | --- |
-| 飞书/Lark | 原生 Markdown 卡片 |
-| Telegram | Rich Markdown，复用既有文本回退 |
 | QQ | Markdown 消息；已知格式拒绝时仅当前分段回退文本 |
-| 钉钉 | 主动 Markdown 消息；明确格式拒绝时回退文本 |
-| Slack | 标准 Markdown block，保留通知文本；明确 block 拒绝时使用原有文本发送 |
-| 企业微信机器人 | 现有 Markdown 消息类型 |
-| Matrix | 清理后的 HTML，并附带文本正文 |
-| Discord | 消息正文的原生 Markdown |
-| WhatsApp | 有限转换常用格式，保护代码，复杂语法保留原文 |
-| 企业微信应用／微信 | 完整文本，保留代码和链接目标 |
+| 微信 | 完整文本，保留代码和链接目标 |
 
-长消息按渠道限制分段。飞书主动卡片保留原有不自动分段的行为，平台拒绝或结果未知时不自动改发文本。其他新增回退仅针对本地格式处理错误或明确的格式拒绝，不重发已成功的分段，不因网络结果未知而改格式重试。旧 Host 可能忽略 `format`，需要加载更新后的插件。
-
-会话同步的最终助手回答请求 Markdown，镜像的 Web 输入使用纯文本，两者都按 Session 绑定地址走普通投递路径，不再经由飞书专用的镜像卡片：飞书收到的就是同一份文本。
+长消息按渠道限制分段。微信主动长文本沿用 1,800 字符分段预算；QQ 优先按结构边界切分 Markdown 分段。回退仅针对本地格式处理错误或明确的格式拒绝，不重发已成功的分段，不因网络结果未知而改格式重试。
 
 同 Host 插件也可以列出某个机器人的已保存目标：
 
@@ -225,18 +199,18 @@ const targets = await ctx.dshIm.listTargets(botId);
 // [{ targetId, name?, kind, route }, ...]
 ```
 
-同 Host 插件也可以把已知的会话路由注册成投递目标。注册后该 `targetId` 可直接用于 `send`，并出现在设置页的目标列表里。下面以飞书私聊为例，`botId` 必须属于飞书机器人：
+同 Host 插件也可以把已知的会话路由注册成投递目标。注册后该 `targetId` 可直接用于 `send`，并出现在设置页的目标列表里。下面以 QQ 私聊为例，`botId` 必须属于 QQ 机器人：
 
 ```js
 await ctx.dshIm.createTarget(botId, {
   targetId: 'release-alerts',
   kind: 'user',
-  route: { openId: 'ou_xxx' },
+  route: { userOpenId: 'xxxxxxxx' },
   name: '发布提醒',              // 可选
 });
 ```
 
-`kind` 和 `route` 必须匹配机器人的渠道，参见[九渠道手动填写字段](#九渠道手动填写字段)。例如飞书群聊使用 `kind: 'group'` 和 `route: { chatId: 'oc_xxx' }`；Telegram 私聊或群聊使用 `kind: 'chat'` 和 `route: { chatId: '123456789' }`，Chat ID 必须是十进制字符串。
+`kind` 和 `route` 必须匹配机器人的渠道，参见[手动填写字段](#手动填写字段)。例如 QQ 群聊使用 `kind: 'group'` 和 `route: { groupOpenId: 'xxxxxxxx' }`；微信私聊使用 `kind: 'user'` 和 `route: { toUserId: 'xxxxxxxx' }`。
 
 `targetId` 已存在时以 `target-conflict` 拒绝；修改或删除已有目标仍走管理 RPC 的 `target.update` / `target.delete`。
 
@@ -363,8 +337,8 @@ HTTP 协议层还可能返回 `method-not-allowed`（405）、`unsupported-media
 - 微信主动投递、连接测试和延迟任务结果会使用该机器人最近收到的对应用户 `context_token`。上下文仅保存在 Host 的账号状态中，重启后恢复，不放进投递目标或返回给调用方；重新绑定并更换登录凭据后清理。升级后需要收到一次用户消息才能建立缓存。
 - 微信是否接受发送仍受 iLink 服务端规则约束。长轮询在线不保证主动发送可用；若持续出现 `ret=-2 prepare failed`，不要通过反复发送心跳尝试续期。可让目标用户发一条消息后重试；这不是登录凭据失效的确定证据，也不能仅凭此错误确定上下文过期或额度耗尽。
 - 微信主动长文本沿用 1,800 字符分段预算，同步助手的 Markdown 代码块在各段补齐围栏。每一段都占用平台发送次数；分段不会解除平台额度限制。中途拒发或结果不确定时停止并报告失败，不重发已经接受的段；诊断会标明失败段序号和总段数。
-
 - 微信主动发送失败会保留在账号的最近消息错误中，包含平台错误码和是否携带上下文等脱敏诊断；健康轮询不会清除此错误，后续成功投递会清除。HTTP/RPC 仍返回既有的 `delivery-failed`，不会自动重试或断开正常的长轮询连接。
+- QQ 主动发送受平台当日主动消息配额约束；额度耗尽时会返回明确错误，稍后重试或等待用户先发一条消息。
 
 ## HTTP 与 RPC 可达范围
 
@@ -381,7 +355,7 @@ HTTP 接口只在当前 Host 提供 WebServer 时注册，并使用同一个监�
 Connection RPC 默认只允许当前 Host 的回环调用。若 Web profile 明确运行在受信任局域网，可在该 profile 的 `cordis.patch.yml` 中复用现有 Host authority：
 
 ```yaml
-- id: xmanrui-dsh-im
+- id: dsh-im-persona
   config:
     rpcAuthority: trusted-host
 ```
@@ -396,7 +370,7 @@ Connection RPC 默认只允许当前 Host 的回环调用。若 Web profile 明�
 
 ### 测试按钮不可点击
 
-确认机器人在线，并填写当前目标类型要求的全部平台原生 ID。Slack Thread 和 Telegram Topic 都需要两个字段。
+确认机器人在线，并填写当前目标类型要求的全部平台原生 ID。QQ 群聊需要群 Open ID；私聊需要用户 Open ID。
 
 ### 保存后能否修改 Target ID
 
@@ -404,40 +378,8 @@ Connection RPC 默认只允许当前 Host 的回环调用。若 Web profile 明�
 
 ### 为什么不用 sessionId
 
-`sessionId` 标识 Harness 会话，不是九个平台统一、稳定的消息投递地址。主动投递只使用机器人和已保存目标的稳定组合。
+`sessionId` 标识 Harness 会话，不是统一的稳定消息投递地址。主动投递只使用机器人和已保存目标的稳定组合。
 
 ### 测试成功但对方没有看到消息
 
 测试成功只证明平台接口接受发送。请继续检查机器人权限、平台限制、目标是否正确，以及客户端侧的消息过滤或归档设置。
-
-## Companion Plugin 的条件主动发送
-
-same-Host `dshIm` Service 新增 `contractVersion:1`、`describeBot(botId)` 和 `sendChecked(botId,targetId,text,options)`。首版认证账号实现只支持飞书/Lark；其他渠道在实现此契约前明确返回 `capability-unavailable`。现有 `send`、HTTP 与管理 RPC 不变。
-
-`describeBot` 返回 `{version:1,botId,channel,account:{fingerprint,name?},connected,capabilities}`；`proactive-text-checked` capability 不是用户授权。飞书/Lark 通过 credentials service 解析凭据，并向平台验证当前 Bot Open ID。fingerprint 为按固定字段顺序 `JSON.stringify({provider:'feishu',domain,appId,botOpenId})` 的 UTF-8 小写 SHA-256，不返回凭据或 token；平台身份与已配置的 verified bot 不同则拒绝。Host 启动时账号异步初始化，需要后续刷新 discovery。
-
-options 必须包含 `expectedFingerprint`、`expectedTargetDigest`，可选 `signal`、`format`。目标 digest 为 `JSON.stringify({kind,route})` 的 UTF-8 小写 SHA-256，route keys 按 JavaScript 字符串 code-unit 升序排列；名称和 alias 不参与。发送检查当前 saved target，冻结规范化 route，再在账号 transition 内重新验证认证身份后使用此 route；验证期间编辑 alias 不会改投。lookup 前删除或改址会拒绝；请求已经开始后，修改不能撤销外部效果。
-
-`account-unverified`、`account-changed`、`target-changed`、`capability-unavailable` 是发送前拒绝；凭据读取与平台认证失败也返回 `account-unverified`。`{sent:true}` 仍只代表平台接受，不代表送达/已读。SDK 开始后的取消、超时和含糊失败不能证明没有发送；调用者持有 durable authorization／intent／attempt 与 reconciliation，不得盲重试。Provider Registration 撤销或控制器关闭会拒绝尚未开始 SDK 请求的条件投递，包括在最后一次账号核验期间发生的撤销；不能撤回已开始的 SDK 请求。
-
-## 飞书/Lark 独占文本收件（同 Host）
-
-拥有独立持久消息存储的应用，可通过 `ctx.dshIm`（`inboundVersion: 1`）独占接收文本消息，并使用 `replyChecked` 沿校验过的原消息/话题回复。此能力仅适用于明确选择外部消费模式的飞书/Lark 账号；其他平台及未启用此模式的账号沿用现有行为。
-
-调用 `describeBot(botId)` 校验身份和 `exclusive-text-consumer`、`reply-text-checked` 能力，然后调用 `consumeInbound(botId, {expectedFingerprint, signal, onEvent})`。`onEvent(event, {signal})` 应先进行群授权、去重和应用持久提交，再返回 `{accepted: true}`。返回的释放函数应随应用 Registration/Fiber 释放。回调仅用于同 Host Service，不暴露至浏览器 RPC 或 HTTP。完整示例见[英文契约](PROACTIVE_DELIVERY.en.md#exclusive-feishulark-text-intake-same-host)。
-
-事件 v1 携带平台、账号和可信 fingerprint、eventId/messageId、发送人原始 ID、群/私聊 ID、mentions、mentionedAccount、ISO 时间、原始文本和原消息回复路由（messageId/conversationId/actorId/threadId/rootId/parentId）。平台提供的可选姓名仅用于展示；此切片不提供头像或附件，有界历史读取见下文。应用自行决定收件范围和唤醒策略。
-
-每个账号只能有一个 Consumer；冲突返回 `consumer-conflict`。`consumerMode: external-consumer` 持久保存后，不创建独立 Session，不执行原生卡片或 slash command。释放 Consumer、Registration 替换、Host 重启均不自动回退独立处理；需重新注册 Consumer，或者明确修改账号模式并重连。应用持久提交需响应取消；已完成的提交不能被释放操作撤销。
-
-`replyChecked` 在发送前读取原消息，核对发送人、群以及 thread/root/parent 路由；同话题回复不回退群主线。来源消失或变化返回 `stale-route`。发送请求已尝试后的 SDK 失败返回 `reply-result-unknown`，应先核对外部会话再决定是否重试。平台重投递可能有缺口、无恢复游标；本契约不保证传输恰好一次，不提供消息已读回执或跨账号回复。去重和持久发送意图归应用管理。
-
-## 有界飞书／Lark 上下文读取（同一 Host）
-
-活跃的独占接收方可调用可选的 `dshIm.historyChecked(botId, source.reply, query, {expectedFingerprint, signal})`。先检查 `history-text-checked`；读取话题另需 `thread-history-text-checked`。query 为 `{scope: 'group' | 'nearby' | 'thread', limit: 1..20, cursor?: string}`。不提供浏览器／HTTP 历史端点；必须使用已验证的 Bot 身份及当前接收权，standalone 账号无法通过此契约读取。
-
-每次读取先重新获取来源，核对发送人、群、thread、root、parent ID。`group` 列出来源群；`nearby` 用消息前后各五分钟的群时间窗口，不声称是原生“附近消息”接口；`thread` 按原生话题读取。返回 `{version:1, scope, events, omitted, hasMore, nextCursor?, window?, coverage:'provider-visible-human-text'}`。每次最多检查 limit 条平台记录；不支持的消息、撤回、应用发言及无效文本计入 omitted。一次只读一页，后续页显式调用；调用方将 continuation 绑定原来源和查询。历史事件 ID 为 `history:<messageId>`，应用应以平台 messageId 和实时事件一起去重。
-
-只返回该 Bot 可见的 Human 文本，沿用标准事件格式。平台返回的可选 `sender_name` 和 mention `name` 仅用于展示，不能用于身份或授权；缺失时不猜测，不查通讯录、不使用 Human token。读取不自动投递普通消息到 Inbox、不唤醒、不回复、不标记已读、不同步撤回；这些决定及 canonical 持久化由消费应用负责。
-
-Bot 权限不足返回 `history-permission-denied`；来源消失或改变返回 `stale-route`；来源没有话题返回 `thread-unavailable`；平台故障及无效分页返回 `history-unavailable`；混入其他群／话题返回 `untrusted-source`。调用取消、接收权释放、Host 关闭、Provider 替换都会丢弃未返回结果。消费方需保留接收生命周期直到读取结束。本能力不保证完整历史，也不提供全平台搜索。

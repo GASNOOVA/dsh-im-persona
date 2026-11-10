@@ -1,3 +1,9 @@
+# ============================================================================
+# dsh-im-persona —— DSH bundle patch（个人定制版 IM 机器人）
+# 装上后 profile 只要在 dsh.profile.bundles 里列出本包名即可生效。
+# 只保留微信与 QQ 两个渠道；机器人配置由设置页写入 DSH home 目录。
+# ============================================================================
+
 - insert:
-    - id: xmanrui-dsh-im
-      name: '@xmanrui/dsh-im'
+    - id: dsh-im-persona
+      name: dsh-im-persona

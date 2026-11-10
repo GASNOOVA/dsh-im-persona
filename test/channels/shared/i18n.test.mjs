@@ -169,11 +169,8 @@ test('t() translates known keys and fills placeholders in English mode', () => {
   // Text a reader sees before any model output, so an untranslated literal
   // here is the first thing that looks broken (see issue #185).
   assert.equal(t('正在处理…'), 'Processing…');
-  // Terminal status rewritten over a rejected Telegram placeholder: the last
-  // thing a reader sees on a degraded reply.
-  assert.equal(t('回复已发送。'), 'The reply was sent.');
   assert.equal(t('回复发送结果未能确认。'), 'The reply delivery result could not be confirmed.');
-  assert.equal(t('消息发送失败，请稍后重试。'), 'The message could not be sent. Try again later.');
+  assert.equal(t('处理完成。'), 'Processing complete.');
   assert.equal(
     t('工具调用「{name}」未成功，请检查工具配置或稍后重试。', { name: 'search' }),
     'Tool call "search" did not succeed. Check the tool configuration or try again later.',
@@ -188,7 +185,6 @@ test('t() translates host text through the Russian dictionary', () => {
   assert.equal(t('正在处理…'), 'Обрабатываю…');
   assert.equal(t('处理完成。'), 'Обработка завершена.');
   assert.equal(t('已停止。'), 'Остановлено.');
-  assert.equal(t('回复已发送。'), 'Ответ отправлен.');
   assert.equal(
     t('卡片已结束，请查看后续消息。'),
     'Карточка завершена, смотрите следующее сообщение.',
@@ -208,12 +204,12 @@ test('t() translates host text through the Russian dictionary', () => {
 });
 
 test('a Russian key missing from the dictionary falls back to English, never to Chinese', () => {
-  const key = '回复已发送。';
+  const key = '处理完成。';
   assert.ok(Object.hasOwn(RU, key), 'sanity: the shipped Russian dictionary carries this key');
   // The shipped dictionary has no gaps, so the gap is exercised against the
   // real lookup with a stripped Russian overlay rather than by shipping a hole.
   const russianGap = { ru: {}, en: EN };
-  assert.equal(translateImHostText(key, 'ru', russianGap), 'The reply was sent.');
+  assert.equal(translateImHostText(key, 'ru', russianGap), EN[key]);
   assert.notEqual(translateImHostText(key, 'ru', russianGap), key);
   // A key the English dictionary does not carry either stays as the Chinese
   // identity text; that is the only way Chinese can reach a Russian reader.

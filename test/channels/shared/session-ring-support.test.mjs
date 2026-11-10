@@ -16,11 +16,7 @@ import { runSessionNavCommand } from '../../../src/channels/shared/session-nav-c
  */
 const STORES = [
   { channel: 'weixin', module: '../../../src/channels/weixin/state-store.mjs', export: 'WeixinStateStore', key: 'p2p:o9cq@im.wechat' },
-  { channel: 'wecom', module: '../../../src/channels/wecom/state-store.mjs', export: 'WecomStateStore', key: 'p2p:zhangsan' },
-  { channel: 'wecom-app', module: '../../../src/channels/wecom-app/state-store.mjs', export: 'WecomAppStateStore', key: 'p2p:zhangsan' },
-  { channel: 'feishu', module: '../../../src/channels/feishu/state-store.mjs', export: 'StateStore', key: 'p2p:ou_1' },
   { channel: 'qq', module: '../../../src/channels/qq/state-store.mjs', export: 'QqStateStore', key: 'c2c:openid-1' },
-  { channel: 'dingtalk', module: '../../../src/channels/dingtalk/state-store.mjs', export: 'DingtalkStateStore', key: 'p2p:staff-1' },
 ];
 
 const RING_METHODS = [

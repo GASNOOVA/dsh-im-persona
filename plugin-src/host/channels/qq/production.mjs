@@ -1,5 +1,8 @@
 import { getGroupHistoryStore } from '../../group-history-runtime.mjs';
 import { getImageInputSettingsStore } from '../../../../src/channels/shared/image-input-settings-store.mjs';
+import { getPersonaStore } from '../../../../src/channels/shared/persona-store.mjs';
+import { getPersonaLibrary } from '../../../../src/channels/shared/persona-library.mjs';
+import { resolvePersonaInjection } from '../../../../src/channels/shared/persona.mjs';
 import { unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -59,6 +62,15 @@ export async function createProductionController(ctx, config = {}, internals = {
   const logger = typeof ctx.logger === 'function' ? ctx.logger('dsh-im:qq') : (ctx.logger ?? console);
   const agentPresetCatalog = () => listAgentPresetCatalog(ctx);
   const paths = pluginPaths(config);
+  // 人设按 botId 持久化；与 persona RPC 共用同一个 getPersonaStore 单例。
+  const personas = getPersonaStore({ dshHome: config.dshHome });
+  await personas.ensureLoaded();
+  // 人设库（builtin + 导入 + 可选 config personaFile）：解析 library 来源的正文。
+  const personaLibrary = getPersonaLibrary({
+    dshHome: config.dshHome,
+    ...(config.personaFile ? { personaFile: config.personaFile } : {}),
+  });
+  await personaLibrary.load();
   const configStore = await new ConfigStore(paths.config).load();
   const { defaultWorkspace, ungroupedWorkspace } = await prepareBotWorkspace(config);
   const WorkspaceStore = internals.WorkspaceStore ?? BotWorkspaceStore;
@@ -149,6 +161,8 @@ export async function createProductionController(ctx, config = {}, internals = {
         state: workspaceScope.state,
         groupHistory: internals.groupHistory ?? getGroupHistoryStore(ctx, config),
         contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
+        // 渠道只依赖「已解析人设」：task-4 的人设库解析只改这里与 store。
+        persona: { botId, getPersona: () => resolvePersonaInjection(personas.personaFor(botId), personaLibrary) },
         accessPolicy: accessPolicyProvider(workspaces, botId, {
           channel: 'qq', config: botConfig,
         }),
@@ -176,12 +190,39 @@ export async function createProductionController(ctx, config = {}, internals = {
       }
     },
   });
-  const controller = createWorkspaceAwareController(coreController, {
+  // 状态快照按 bot 补上人设；deleteBot 的 RPC 结果同样是状态快照，需要同样装饰。
+  const personaView = (snapshot) => (snapshot && Array.isArray(snapshot.bots)
+    ? {
+      ...snapshot,
+      bots: snapshot.bots.map((bot) => (bot?.botId
+        ? { ...bot, persona: personas.personaFor(bot.botId) }
+        : bot)),
+    }
+    : snapshot);
+  const clearPersona = (botId) => personas.clearPersona(botId).catch((error) => {
+    logger.warn?.(`[dsh-im] unable to clear persona for ${botId}:`, error?.message ?? error);
+  });
+  const workspaceController = createWorkspaceAwareController(coreController, {
     harness,
     workspaces,
     stateFor,
     agentPresetCatalog,
     modelCatalog,
+  });
+  const controller = new Proxy(workspaceController, {
+    get(target, property) {
+      if (property === 'status') {
+        return async (...args) => personaView(await target.status(...args));
+      }
+      if (property === 'deleteBot') {
+        return async (...args) => {
+          const result = await target.deleteBot(...args);
+          await clearPersona(args[0]);
+          return personaView(result);
+        };
+      }
+      return Reflect.get(target, property);
+    },
   });
   const supervisor = createSupervisor({
     controller,

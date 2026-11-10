@@ -4,19 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
 
-import { larkSdkHandshakePatch } from './lark-sdk-handshake-patch.mjs';
-
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(sourceDirectory, '../..');
 const outputPath = resolve(packageRoot, 'lib/index.js');
 const externalRuntimePackages = [
   '@tencent-connect/qqbot-connector',
   '@tencent-connect/qqbot-nodejs',
-  '@wecom/aibot-node-sdk',
-  'dingtalk-stream',
-  'imapflow',
-  'mailparser',
-  'nodemailer',
   'qrcode',
   'sharp',
   'undici',
@@ -32,7 +25,6 @@ await build({
   target: ['node22'],
   mainFields: ['module', 'main'],
   external,
-  plugins: [larkSdkHandshakePatch],
   outfile: outputPath,
   banner: {
     js: [

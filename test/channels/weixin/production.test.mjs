@@ -172,7 +172,7 @@ test('Weixin production has no per-bot result-file Gate', async (t) => {
     logger: () => ({ error() {}, warn() {}, info() {}, debug() {} }),
   };
 
-  const production = await createProductionController(ctx, { dataDir }, internals);
+  const production = await createProductionController(ctx, { dataDir, dshHome: dataDir }, internals);
   await controllerOptions.createRuntime({
     botId: 'wx_enabled',
     config: { botId: 'wx_enabled' },
@@ -190,7 +190,7 @@ test('Weixin production has no per-bot result-file Gate', async (t) => {
   assert.equal(runtimes[1].maxMessageChars, 1_800);
   await production.close();
 
-  const productionWithDefault = await createProductionController(ctx, { dataDir }, internals);
+  const productionWithDefault = await createProductionController(ctx, { dataDir, dshHome: dataDir }, internals);
   await controllerOptions.createRuntime({
     botId: 'wx_default',
     config: { botId: 'wx_default' },
@@ -228,7 +228,7 @@ test('production preserves workspace/session isolation and reports a committed c
   const internals = { HarnessClient: Harness, Runtime, api: { beginLogin() {}, pollLogin() {} },
     createConnectionSupervisor: () => ({ ready: Promise.resolve(), start() { return this; }, async close() {} }),
   };
-  let production = await createProductionController(ctx, { dataDir }, internals);
+  let production = await createProductionController(ctx, { dataDir, dshHome: dataDir }, internals);
   t.after(() => production.close());
   await production.controller.initialize();
   const handler = () => createWeixinRpcHandler(production.controller, { logger: ctx.logger });
@@ -240,7 +240,7 @@ test('production preserves workspace/session isolation and reports a committed c
   assert.equal(credentials.size, 2);
   assert.equal(switched.value.totals.connected, 2);
   await production.close();
-  production = await createProductionController(ctx, { dataDir }, internals);
+  production = await createProductionController(ctx, { dataDir, dshHome: dataDir }, internals);
   await production.controller.initialize();
   assert.equal((await production.controller.status()).bots[0].workspace, nextWorkspace);
   assert.equal((await production.controller.status()).totals.connected, 2);

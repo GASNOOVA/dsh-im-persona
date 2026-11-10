@@ -10,74 +10,79 @@ import {
   resolvePrivateConversationKey,
 } from '../plugin-src/host/delivery-suggestions.mjs';
 
-const TOPIC_TARGET = { kind: 'topic', route: { chatId: '-1001234567890', messageThreadId: 42 } };
-const CHAT_TARGET = { kind: 'chat', route: { chatId: '88' } };
+const WEIXIN_TARGET = { kind: 'user', route: { toUserId: 'wx-user-1' } };
+const QQ_USER_TARGET = { kind: 'user', route: { userOpenId: 'openid-1' } };
+const QQ_GROUP_TARGET = { kind: 'group', route: { groupOpenId: 'group-openid-1' } };
 
-test('a Telegram forum topic key matches its own topic target only', () => {
-  const key = 'group:-1001234567890:42';
-  assert.deepEqual(deliverySuggestionFromConversationKey('telegram', key), TOPIC_TARGET);
-  assert.equal(conversationKeyMatchesTarget('telegram', key, TOPIC_TARGET), true);
-  assert.equal(conversationKeyMatchesTarget('telegram', key, CHAT_TARGET), false);
-  assert.equal(conversationKeyMatchesTarget('telegram', 'group:-1001234567890', TOPIC_TARGET), false,
-    'a thread id is part of the route');
-  assert.equal(conversationKeyMatchesTarget('telegram', key, { ...TOPIC_TARGET, targetId: 'daily' }), true,
+test('a Weixin p2p key maps to its own user target only', () => {
+  const key = 'p2p:wx-user-1';
+  assert.deepEqual(deliverySuggestionFromConversationKey('weixin', key), WEIXIN_TARGET);
+  assert.equal(conversationKeyMatchesTarget('weixin', key, WEIXIN_TARGET), true);
+  assert.equal(conversationKeyMatchesTarget('weixin', key, {
+    kind: 'user', route: { toUserId: 'wx-user-2' },
+  }), false);
+  assert.equal(conversationKeyMatchesTarget('weixin', key, { ...WEIXIN_TARGET, targetId: 'daily' }), true,
     'targetId and name are not part of the route identity');
-  assert.equal(conversationKeyMatchesTarget('telegram', key, {
-    kind: 'topic',
-    route: { chatId: '-1001234567890', messageThreadId: 43 },
+  assert.equal(conversationKeyMatchesTarget('weixin', 'p2p:', WEIXIN_TARGET), false);
+});
+
+test('a QQ c2c key maps to its own private target only', () => {
+  const key = 'c2c:openid-1';
+  assert.deepEqual(deliverySuggestionFromConversationKey('qq', key), QQ_USER_TARGET);
+  assert.equal(conversationKeyMatchesTarget('qq', key, QQ_USER_TARGET), true);
+  assert.equal(conversationKeyMatchesTarget('qq', key, QQ_GROUP_TARGET), false);
+  assert.equal(conversationKeyMatchesTarget('qq', key, {
+    kind: 'user', route: { userOpenId: 'openid-2' },
   }), false);
 });
 
-test('Session sync resolves a topic conversation key the same way as a private one', () => {
-  const sessions = {
-    'direct:88': 'session-private',
-    'group:-1001234567890:42': 'session-topic',
-    'direct:99': 'session-other',
-  };
-  assert.equal(resolveConversationKey('telegram', sessions, TOPIC_TARGET), 'group:-1001234567890:42');
-  assert.equal(resolveConversationKey('telegram', sessions, CHAT_TARGET), 'direct:88');
-  assert.equal(resolveConversationKey('telegram', sessions, {
-    kind: 'topic', route: { chatId: '-1001234567890', messageThreadId: 7 },
-  }), null, 'an unknown topic cannot be enabled');
-  assert.equal(resolveConversationKey('telegram', {}, TOPIC_TARGET), null);
-  assert.equal(resolveConversationKey('unknown', sessions, TOPIC_TARGET), null);
-  assert.equal(resolveConversationKey('telegram', null, TOPIC_TARGET), null);
+test('a QQ group key maps to its own group target only', () => {
+  const key = 'group:group-openid-1';
+  assert.deepEqual(deliverySuggestionFromConversationKey('qq', key), QQ_GROUP_TARGET);
+  assert.equal(conversationKeyMatchesTarget('qq', key, QQ_GROUP_TARGET), true);
+  assert.equal(conversationKeyMatchesTarget('qq', key, QQ_USER_TARGET), false);
+  assert.equal(conversationKeyMatchesTarget('qq', key, {
+    kind: 'group', route: { groupOpenId: 'group-openid-2' },
+  }), false);
+  assert.equal(conversationKeyMatchesTarget('qq', 'group:', QQ_GROUP_TARGET), false);
 });
 
-test('group, thread, and channel routes resolve beyond private chat', () => {
-  const slackThread = { kind: 'thread', route: { channelId: 'C123', threadTs: '1712345678.123456' } };
-  assert.equal(
-    resolveConversationKey('slack', { 'group:C123:1712345678.123456': 'session-thread' }, slackThread),
-    'group:C123:1712345678.123456',
-  );
-  const discordChannel = { kind: 'channel', route: { channelId: '123456789012345678' } };
-  assert.equal(
-    resolveConversationKey('discord', { 'group:123456789012345678': 'session-channel' }, discordChannel),
-    'group:123456789012345678',
-  );
-  const feishuGroup = { kind: 'group', route: { chatId: 'oc_group' } };
-  assert.equal(
-    resolveConversationKey('feishu', { 'group:oc_group': 'session-group' }, feishuGroup),
-    'group:oc_group',
-  );
+test('Session sync resolves exactly one matching conversation', () => {
+  const sessions = {
+    'p2p:wx-user-1': 'session-weixin',
+    'c2c:openid-1': 'session-qq',
+    'c2c:openid-2': 'session-other',
+  };
+  assert.equal(resolveConversationKey('weixin', sessions, WEIXIN_TARGET), 'p2p:wx-user-1');
+  assert.equal(resolveConversationKey('qq', sessions, QQ_USER_TARGET), 'c2c:openid-1');
+  assert.equal(resolveConversationKey('qq', sessions, {
+    kind: 'user', route: { userOpenId: 'openid-9' },
+  }), null, 'an unknown target cannot be enabled');
+  assert.equal(resolveConversationKey('weixin', {}, WEIXIN_TARGET), null);
+  assert.equal(resolveConversationKey('unknown', sessions, WEIXIN_TARGET), null);
+  assert.equal(resolveConversationKey('qq', null, QQ_USER_TARGET), null);
 });
 
-test('an ambiguous route refuses to resolve instead of guessing', () => {
-  const sessions = {
-    'direct:88': 'session-private',
-    'group:88': 'session-duplicate-chat',
-  };
-  // Both keys describe the Telegram chat 88, so neither can be chosen safely.
-  assert.equal(resolveConversationKey('telegram', sessions, CHAT_TARGET), null);
-  assert.equal(privateConversationKeyMatchesTarget('telegram', 'direct:88', CHAT_TARGET), true);
+test('malformed and unknown route keys are ignored instead of guessing', () => {
+  assert.equal(deliverySuggestionFromConversationKey('qq', 'c2c:'), null);
+  assert.equal(deliverySuggestionFromConversationKey('qq', 'c2c:has space'), null);
+  assert.equal(deliverySuggestionFromConversationKey('weixin', 'group:group-openid-1'), null,
+    'Weixin keys are p2p only');
+  assert.equal(resolveConversationKey('qq', {
+    'c2c:': 'session-empty',
+    'c2c:openid 1': 'session-space',
+    'c2c:openid-1': 'session-ok',
+  }, QQ_USER_TARGET), 'c2c:openid-1');
 });
 
 test('the private helpers stay private-chat only, as the target hints need', () => {
-  assert.equal(privateDeliverySuggestionFromConversationKey('telegram', 'group:-100:42'), null);
-  assert.equal(privateConversationKeyMatchesTarget('telegram', 'group:-100:42', TOPIC_TARGET), false);
-  assert.equal(resolvePrivateConversationKey('telegram', {
-    'group:-100:42': 'session-topic',
-    'direct:88': 'session-private',
-  }, TOPIC_TARGET), null);
-  assert.equal(conversationKeyMatchesTarget('telegram', 'direct:88', TOPIC_TARGET), false);
+  assert.deepEqual(privateDeliverySuggestionFromConversationKey('weixin', 'p2p:wx-user-1'), WEIXIN_TARGET);
+  assert.deepEqual(privateDeliverySuggestionFromConversationKey('qq', 'c2c:openid-1'), QQ_USER_TARGET);
+  assert.equal(privateDeliverySuggestionFromConversationKey('qq', 'group:group-openid-1'), null);
+  assert.equal(privateConversationKeyMatchesTarget('qq', 'group:group-openid-1', QQ_GROUP_TARGET), false);
+  assert.equal(resolvePrivateConversationKey('qq', {
+    'group:group-openid-1': 'session-group',
+    'c2c:openid-1': 'session-private',
+  }, QQ_USER_TARGET), 'c2c:openid-1');
+  assert.equal(conversationKeyMatchesTarget('weixin', 'p2p:wx-user-1', QQ_USER_TARGET), false);
 });

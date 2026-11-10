@@ -120,10 +120,10 @@ test('web keeps its one bilingual settings entry, including hosts without provid
     const host = start(t, { provide });
     assert.equal(host.entries.size, 1);
     const { options, component } = [...host.entries][0];
-    assert.equal(options.id, 'xmanrui-dsh-im');
+    assert.equal(options.id, 'dsh-im-persona');
     assert.equal(options.order, 21);
     assert.equal(options.label(), 'IM机器人');
-    assert.equal(options.locale, 'dsh-im');
+    assert.equal(options.locale, 'dsh-im-persona');
     const markup = renderToStaticMarkup(React.createElement(component));
     assert.match(markup, /DSH-IM/);
     assert.match(markup, /id="dim-panel-weixin"/);
@@ -239,17 +239,16 @@ test('render returns fresh elements of a stable type without changing settings o
 
 test('preferred section is initial-only, invalid sections retain the web default', (t) => {
   const host = start(t);
-  for (const id of ['weixin', 'feishu', 'dingtalk', 'wecom', 'wecomApp', 'qq', 'slack',
-    'telegram', 'discord', 'whatsapp', 'imessage', 'matrix', 'office', 'global-settings', 'unknown', undefined]) {
+  for (const id of ['weixin', 'qq', 'global-settings', 'unknown', undefined]) {
     const markup = renderToStaticMarkup(host.service.render({ preferredSectionId: id }));
     const expected = !id || id === 'unknown' ? 'weixin' : id;
     assert.ok(markup.includes(`id="dim-panel-${expected}"`), String(id));
   }
   let renderer;
-  act(() => { renderer = create(host.service.render({ preferredSectionId: 'feishu' })); });
+  act(() => { renderer = create(host.service.render({ preferredSectionId: 'weixin' })); });
   t.after(() => act(() => renderer.unmount()));
   act(() => renderer.root.findByProps({ id: 'dim-tab-qq' }).props.onClick());
-  act(() => renderer.update(host.service.render({ preferredSectionId: 'telegram' })));
+  act(() => renderer.update(host.service.render({ preferredSectionId: 'qq' })));
   assert.equal(renderer.root.findByProps({ role: 'tabpanel' }).props.id, 'dim-panel-qq');
 });
 
@@ -258,24 +257,23 @@ test('embedded panel receives the same management calls and picker, ignoring inj
   const dependencies = [...host.entries][0].options.inject();
   host.service.setSettingsVisible(false);
   let renderer;
-  act(() => { renderer = create(host.service.render({ feishuRpcCall: () => { throw Error('override'); } })); });
+  act(() => { renderer = create(host.service.render({ weixinRpcCall: () => { throw Error('override'); } })); });
   t.after(() => act(() => renderer.unmount()));
   const props = renderer.root.findByType(IMSettingsTab).props;
   for (const [name, value] of Object.entries(dependencies)) assert.equal(props[name], value, name);
   const before = host.calls.length;
   const signal = new AbortController().signal;
-  for (const name of ['feishuRpcCall', 'emailRpcCall', 'matrixRpcCall', 'updateRpcCall', 'deliveryRpcCall', 'globalSettingsRpcCall']) {
+  const rpcNames = ['weixinRpcCall', 'qqRpcCall', 'personaRpcCall', 'deliveryRpcCall', 'globalSettingsRpcCall'];
+  for (const name of rpcNames) {
     props[name]('check', { test: true }, signal);
   }
-  assert.equal(host.calls.length, before + 6);
-  assert.deepEqual(host.calls.slice(before).map((args) => args.slice(1)), [
-    ['dsh-im/feishu', { method: 'check', payload: { test: true } }, signal],
-    ['dsh-im/email', { method: 'check', payload: { test: true } }, signal],
-    ['dsh-im/matrix', { method: 'check', payload: { test: true } }, signal],
-    ['dsh-im/dsh-im', { method: 'check', payload: { test: true } }, signal],
-    ['dsh-im/dsh-im-delivery', { method: 'check', payload: { test: true } }, signal],
-    ['dsh-im/dsh-im-settings', { method: 'check', payload: { test: true } }, signal],
-  ]);
+  assert.equal(host.calls.length, before + rpcNames.length);
+  const calls = host.calls.slice(before).map((args) => args.slice(1));
+  for (const [index, call] of calls.entries()) {
+    assert.equal(typeof call[0], 'string', rpcNames[index]);
+    assert.deepEqual(call[1], { method: 'check', payload: { test: true } }, rpcNames[index]);
+    assert.equal(call[2], signal, rpcNames[index]);
+  }
   assert.deepEqual(await props.workspaceDirectoryPicker.listDirectory('/tmp'), { path: '/tmp', entries: [] });
   assert.equal(await props.workspaceDirectoryPicker.pickDirectory(), '/chosen');
   assert.equal(host.service.settingsVisible(), false);

@@ -1,23 +1,15 @@
-// Read-only directory of every DSH-IM channel and its bound DSH sessions.
+// Read-only directory of the personal edition's IM channels and their bound DSH sessions.
 // Opened from the IM settings toolbar; it has no permanent sidebar entry.
 import * as React from 'react';
 import { callManagementRpc } from '../management-rpc.mjs';
 import { h, IM_LOCALE_NAMESPACE, imLocale, localizeTemplate, localizeText } from './i18n.js';
 import { IM_MAIN_PANEL_ID } from './plugin-page.js';
 export const CHANNEL_LIST_RPC_CHANNEL = '/dsh-im-channels';
-export const CHANNEL_SESSIONS_PANEL_ID = 'xmanrui-dsh-im-channels';
+export const CHANNEL_SESSIONS_PANEL_ID = 'dsh-im-persona-channels';
 
+// Personal edition: only the Weixin and QQ channels exist.
 const CHANNEL_LABELS = Object.freeze({
-  matrix: 'Matrix',
-  telegram: 'Telegram',
-  whatsapp: 'WhatsApp',
-  wecom: '微信客服',
-  'wecom-app': '企业微信',
-  feishu: '飞书',
-  dingtalk: '钉钉',
-  slack: 'Slack',
-  discord: 'Discord',
-  line: 'LINE',
+  weixin: '微信',
   qq: 'QQ',
 });
 
@@ -128,7 +120,7 @@ class ChannelListPage extends React.Component {
         throw new Error(result?.error?.message || result?.error?.code || 'failed to list channels');
       }
       if (!Array.isArray(result.value?.channels)) {
-        throw new Error('宿主响应缺少 value.channels，请检查 dsh-im host 是否已重载');
+        throw new Error('宿主响应缺少 value.channels，请检查 dsh-im-persona host 是否已重载');
       }
       if (!this.unmounted) this.setState({ channels: result.value.channels });
     } catch (error) {
@@ -162,7 +154,7 @@ class ChannelListPage extends React.Component {
         throw new Error(result?.error?.message || result?.error?.code || 'failed to read session');
       }
       if (!Array.isArray(result.value?.messages)) {
-        throw new Error('宿主响应缺少 value.messages，请检查 dsh-im host 是否已重载');
+        throw new Error('宿主响应缺少 value.messages，请检查 dsh-im-persona host 是否已重载');
       }
       this.setState({ detail: result.value, detailError: null });
     } catch (error) {

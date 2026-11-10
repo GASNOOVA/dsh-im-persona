@@ -1,4 +1,4 @@
-export const WEIXIN_STYLE_ID = 'xmanrui-dsh-im-weixin-settings';
+export const WEIXIN_STYLE_ID = 'dsh-im-persona-weixin-settings';
 
 const CSS = String.raw`
 .dxw-page {
@@ -107,7 +107,7 @@ export function installWeixinStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${WEIXIN_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = 'dsh-im-persona';
   style.dataset.pluginCss = WEIXIN_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

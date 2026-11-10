@@ -1,23 +1,9 @@
 import { parseSessionChannelTitle } from '../../src/channels/shared/session-channel-labels.mjs';
-import {
-  WeixinLogoGlyph, FeishuLogoGlyph, DingtalkLogoGlyph, WecomLogoGlyph, QqLogoGlyph,
-  SlackLogoGlyph, TelegramLogoGlyph, DiscordLogoGlyph, WhatsappLogoGlyph, OfficeLogoGlyph,
-  IMessageLogoGlyph, MatrixLogoGlyph,
-} from './channel-logos.js';
+import { WeixinLogoGlyph, QqLogoGlyph } from './channel-logos.js';
 
 const GLYPHS = Object.freeze({
   weixin: [WeixinLogoGlyph, '#07c160'],
-  feishu: [FeishuLogoGlyph, '#3370ff'],
-  dingtalk: [DingtalkLogoGlyph, '#1677ff'],
-  wecom: [WecomLogoGlyph, '#3370ff'],
   qq: [QqLogoGlyph, '#12b7f5'],
-  slack: [SlackLogoGlyph, '#e01e5a'],
-  telegram: [TelegramLogoGlyph, '#229ed9'],
-  discord: [DiscordLogoGlyph, '#5865f2'],
-  whatsapp: [WhatsappLogoGlyph, '#25d366'],
-  imessage: [IMessageLogoGlyph, '#3478f6'],
-  matrix: [MatrixLogoGlyph, '#1a8f6f'],
-  office: [OfficeLogoGlyph, '#f97316'],
 });
 const CHANNEL_ATTR = 'data-dsh-im-session-channel';
 const TITLE_ATTR = 'data-dsh-im-session-text';

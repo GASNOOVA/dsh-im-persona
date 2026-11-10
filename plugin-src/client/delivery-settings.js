@@ -4,18 +4,13 @@ import { AccessPolicySettingsPage } from './access-policy-settings.js';
 import { BotGeneralSettingsPage } from './bot-general-settings.js';
 import { BotSettingsTabs } from './bot-settings-tabs.js';
 import { DsBotSettingsPage } from './ds-bot-settings.js';
-import { FeishuGroupSettingsPage } from './channels/feishu/group-settings.js';
-import { FeishuVoiceSettingsPage } from './channels/feishu/voice-settings.js';
-import { FeishuSlashPanelSettingsPage } from './channels/feishu/slash-panel-settings.js';
-import { FeishuConversationDirectorySettingsPage } from './channels/feishu/conversation-directory-settings.js';
-import { TelegramGroupTriggersSettings } from './channels/telegram/group-triggers-settings.js';
 import { h, imLocale, localizeTemplate, localizeText } from './i18n.js';
 
 export const DELIVERY_RPC_CHANNEL = '/dsh-im-delivery';
 
 const DELIVERY_DOCS_URL = Object.freeze({
-  zh: 'https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.md',
-  en: 'https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.en.md',
+  zh: 'https://github.com/GASNOOVA/dsh-im-persona/blob/main/PROACTIVE_DELIVERY.md',
+  en: 'https://github.com/GASNOOVA/dsh-im-persona/blob/main/PROACTIVE_DELIVERY.md',
 });
 
 export const DELIVERY_ENDPOINTS = Object.freeze({
@@ -35,22 +30,10 @@ export const BOT_SETTINGS_TABS = Object.freeze([
   Object.freeze({ id: 'access', label: '访问设置' }),
 ]);
 
-export const FEISHU_BOT_SETTINGS_TABS = Object.freeze([
-  ...BOT_SETTINGS_TABS,
-  Object.freeze({ id: 'conversation-directory', label: '会话目录' }),
-  Object.freeze({ id: 'group', label: '群聊' }),
-  Object.freeze({ id: 'slash', label: '指令面板' }),
-  Object.freeze({ id: 'voice', label: '语音交互' }),
-]);
-
-export const TELEGRAM_BOT_SETTINGS_TABS = Object.freeze([
-  ...BOT_SETTINGS_TABS,
-  Object.freeze({ id: 'groups', label: '机器人群聊行为' }),
-]);
-
-export function botSettingsTabsForChannel(channel) {
-  if (channel === 'feishu') return FEISHU_BOT_SETTINGS_TABS;
-  if (channel === 'telegram') return TELEGRAM_BOT_SETTINGS_TABS;
+export function botSettingsTabsForChannel() {
+  // Personal edition: Weixin and QQ use the shared tab set; the per-channel
+  // Feishu chat/voice/slash tabs and the Telegram group-trigger tab were
+  // removed with those channels.
   return BOT_SETTINGS_TABS;
 }
 
@@ -60,92 +43,12 @@ const CHANNEL_DEFINITIONS = Object.freeze({
     kinds: [{ value: 'user', label: '用户' }],
     fields: { user: [{ key: 'toUserId', label: '微信用户 ID', placeholder: '填写接收消息的用户 ID' }] },
   },
-  feishu: {
-    label: '飞书',
-    kinds: [{ value: 'user', label: '私聊' }, { value: 'group', label: '群聊' }],
-    fields: {
-      user: [{ key: 'openId', label: 'Open ID', placeholder: 'ou_xxx' }],
-      group: [{ key: 'chatId', label: '群 Chat ID', placeholder: 'oc_xxx' }],
-    },
-  },
-  dingtalk: {
-    label: '钉钉',
-    kinds: [{ value: 'user', label: '用户' }, { value: 'group', label: '群聊' }],
-    fields: {
-      user: [{ key: 'userId', label: '用户 ID', placeholder: '填写钉钉用户 ID' }],
-      group: [{ key: 'openConversationId', label: '群 Open Conversation ID', placeholder: 'cidxxx' }],
-    },
-  },
-  wecom: {
-    label: '企业微信',
-    kinds: [{ value: 'user', label: '私聊' }, { value: 'group', label: '群聊' }],
-    fields: {
-      user: [{ key: 'chatId', label: '用户 ID', placeholder: '填写企业微信用户 ID' }],
-      group: [{ key: 'chatId', label: '群 Chat ID', placeholder: '填写群 chatid' }],
-    },
-  },
-  wecomApp: {
-    label: '企业微信应用',
-    kinds: [{ value: 'user', label: '私聊' }],
-    fields: {
-      user: [{ key: 'chatId', label: '用户 ID', placeholder: '填写企业微信用户 ID' }],
-    },
-  },
   qq: {
     label: 'QQ',
     kinds: [{ value: 'user', label: '单聊' }, { value: 'group', label: '群聊' }],
     fields: {
       user: [{ key: 'userOpenId', label: '用户 Open ID', placeholder: '填写 user_openid' }],
       group: [{ key: 'groupOpenId', label: '群 Open ID', placeholder: '填写 group_openid' }],
-    },
-  },
-  slack: {
-    label: 'Slack',
-    kinds: [{ value: 'conversation', label: '会话' }, { value: 'thread', label: '线程' }],
-    fields: {
-      conversation: [{ key: 'channelId', label: 'Channel ID', placeholder: 'C0123456789' }],
-      thread: [
-        { key: 'channelId', label: 'Channel ID', placeholder: 'C0123456789' },
-        { key: 'threadTs', label: 'Thread 时间戳', placeholder: '1712345678.123456' },
-      ],
-    },
-  },
-  telegram: {
-    label: 'Telegram',
-    kinds: [{ value: 'chat', label: '聊天' }, { value: 'topic', label: '话题' }],
-    fields: {
-      chat: [{ key: 'chatId', label: 'Chat ID', placeholder: '-1001234567890', inputMode: 'numeric' }],
-      topic: [
-        { key: 'chatId', label: 'Chat ID', placeholder: '-1001234567890', inputMode: 'numeric' },
-        { key: 'messageThreadId', label: 'Topic ID', placeholder: '123', inputMode: 'numeric', integer: true },
-      ],
-    },
-  },
-  discord: {
-    label: 'Discord',
-    kinds: [{ value: 'channel', label: '频道或私信' }],
-    fields: { channel: [{ key: 'channelId', label: 'Channel ID', placeholder: '填写可发消息的 Channel ID', inputMode: 'numeric' }] },
-  },
-  whatsapp: {
-    label: 'WhatsApp',
-    kinds: [{ value: 'user', label: '用户' }, { value: 'group', label: '群聊' }],
-    fields: {
-      user: [{ key: 'jid', label: '用户 JID', placeholder: '8613800000000@s.whatsapp.net' }],
-      group: [{ key: 'jid', label: '群 JID', placeholder: '1234567890@g.us' }],
-    },
-  },
-  imessage: {
-    label: 'iMessage',
-    kinds: [{ value: 'user', label: '私聊' }],
-    fields: { user: [{ key: 'chatGuid', label: 'Chat GUID', placeholder: 'iMessage;+;chat123' }] },
-  },
-  // 邮箱渠道在 Host 侧（delivery-adapter 的 case 'email'）早于投递设置页面支持，
-  // route 只有 address 一个字段，kind 固定为 user，这里补齐表单定义让投递目标可选。
-  email: {
-    label: '邮箱',
-    kinds: [{ value: 'user', label: '收件人' }],
-    fields: {
-      user: [{ key: 'address', label: '邮箱地址', placeholder: 'name@example.com', inputMode: 'email' }],
     },
   },
 });
@@ -661,19 +564,11 @@ export function DeliveryTargetSettingsPage({
   const [saving, setSaving] = React.useState(false);
   const [botCopyState, setBotCopyState] = React.useState(null);
   const [accessPolicy, setAccessPolicy] = React.useState(account.accessPolicy);
-  // The slash panel page re-reads its baseline from this snapshot after a save,
-  // so the saved panel has to land here — a stale account would put the
-  // pre-save list back on screen and into the next "copy to other bots" payload.
-  const [slashPanel, setSlashPanel] = React.useState(account.slashPanel);
   const mounted = React.useRef(true);
 
   React.useEffect(() => {
     setAccessPolicy(account.accessPolicy);
   }, [account.botId, account.accessPolicy]);
-
-  React.useEffect(() => {
-    setSlashPanel(account.slashPanel);
-  }, [account.botId, account.slashPanel]);
 
   const invoke = React.useCallback(async (endpoint, payload = {}, signal) => {
     if (typeof rpcCall !== 'function') throw new Error('投递目标设置暂不可用。');
@@ -816,31 +711,6 @@ export function DeliveryTargetSettingsPage({
         rpcCall: accessRpcCall,
         onSaved: setAccessPolicy,
       })
-    : activeTab.id === 'conversation-directory' && channel === 'feishu'
-      ? h(FeishuConversationDirectorySettingsPage, { account, rpcCall: accessRpcCall })
-    : activeTab.id === 'groups' && channel === 'telegram'
-      ? h(TelegramGroupTriggersSettings, {
-          key: `${channel}:${account.botId}:groups`,
-          account,
-          rpcCall: accessRpcCall,
-        })
-    : activeTab.id === 'group' && channel === 'feishu'
-      ? h(FeishuGroupSettingsPage, {
-          account,
-          rpcCall: accessRpcCall,
-        })
-    : activeTab.id === 'slash' && channel === 'feishu'
-      ? h(FeishuSlashPanelSettingsPage, {
-          account: { ...account, slashPanel },
-          rpcCall: accessRpcCall,
-          onSaved: setSlashPanel,
-        })
-    : activeTab.id === 'voice' && channel === 'feishu'
-      ? h(FeishuVoiceSettingsPage, {
-          key: account.botId,
-          account,
-          rpcCall: accessRpcCall,
-        })
     : h(React.Fragment, null,
   h('section', { className: 'dim-deliveryIdentity', 'aria-labelledby': 'dim-delivery-bot-title' },
     h('div', { className: 'dim-deliveryIdentityHeading' },

@@ -26,7 +26,7 @@ test('missing Sessions accept both RPC codes without changing the original error
 test('unknown transport failures reuse normalized timeout and network evidence', () => {
   for (const [error, code, reason] of [
     [new DOMException('private timeout detail', 'TimeoutError'), 'REQUEST_TIMEOUT', 'timeout'],
-    [{ code: 'telegram-timeout' }, 'REQUEST_TIMEOUT', 'timeout'],
+    [{ code: 'connect-timeout' }, 'REQUEST_TIMEOUT', 'timeout'],
     [{ code: 'timeout' }, 'REQUEST_TIMEOUT', 'timeout'],
     [{ code: 'UND_ERR_HEADERS_TIMEOUT' }, 'REQUEST_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT'],
     [new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } }), 'NETWORK_ERROR', 'ENOTFOUND'],

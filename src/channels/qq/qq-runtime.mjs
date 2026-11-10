@@ -36,6 +36,7 @@ export class QqRuntime {
   #harness;
   #state;
   #contextEnhancement;
+  #persona;
   #groupHistory;
   #accessPolicy;
   #logger;
@@ -57,6 +58,7 @@ export class QqRuntime {
     harness,
     state,
     contextEnhancement,
+    persona,
     groupHistory,
     accessPolicy,
     logger = console,
@@ -73,6 +75,7 @@ export class QqRuntime {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#persona = persona;
     this.#groupHistory = groupHistory;
     this.#accessPolicy = accessPolicy;
     this.#logger = logger; this.#diagnostics = createConnectionDiagnostics({ channel: 'qq', logger });
@@ -194,6 +197,7 @@ export class QqRuntime {
       harness: this.#harness,
       state: this.#state,
       contextEnhancement: this.#contextEnhancement,
+      persona: this.#persona,
       groupHistory: this.#groupHistory,
       accessPolicy: this.#accessPolicy,
       status: this.#status,

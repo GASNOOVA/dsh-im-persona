@@ -12,12 +12,6 @@ export default {
   '结果文件': 'result file',
   '结果文件「{name}」的发送结果未能确认，请先检查聊天内是否已收到，不要立即重试。':
     'The delivery result of the result file "{name}" could not be confirmed. Please check whether it already arrived in the chat before retrying.',
-  '结果文件「{name}」已生成，但 Slack 应用缺少 files:write 权限。请更新 Manifest、重新安装应用并重新连接机器人后重试。':
-    'The result file "{name}" was generated, but the Slack app is missing the files:write permission. Please update the Manifest, reinstall the app, reconnect the bot, and try again.',
-  '结果文件「{name}」已生成，但机器人缺少 Discord 的 Send Messages、Attach Files 或 Read Message History 权限。':
-    'The result file "{name}" was generated, but the bot is missing the Discord Send Messages, Attach Files, or Read Message History permission.',
-  '结果文件「{name}」已生成，但 Telegram 不允许机器人在当前聊天发送文档，请检查聊天权限。':
-    'The result file "{name}" was generated, but Telegram does not allow the bot to send documents in this chat. Please check the chat permissions.',
   '结果文件「{name}」已生成，但当前机器人没有文件发送权限，请检查渠道权限。':
     'The result file "{name}" was generated, but the bot does not have permission to send files. Please check the channel permissions.',
   '结果文件「{name}」超过当前渠道大小上限，未发送。':

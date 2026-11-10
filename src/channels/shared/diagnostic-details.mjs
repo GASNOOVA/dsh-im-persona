@@ -114,10 +114,10 @@ export function normalizeDiagnosticDetails(value) {
   if (Number.isSafeInteger(value.attempts) && value.attempts >= 0) result.attempts = value.attempts;
   for (const field of ['nodeVersion', 'dshVersion']) if (typeof value[field] === 'string' && /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(value[field]) && value[field].length < 80) result[field] = value[field];
   if (['darwin', 'linux', 'win32', 'freebsd'].includes(value.platform)) result.platform = value.platform;
-  if (['ilinkai.weixin.qq.com', 'oapi.dingtalk.com', 'api.dingtalk.com', 'api.telegram.org', 'discord.com', 'slack.com', 'open.feishu.cn', 'qyapi.weixin.qq.com'].includes(value.host)) result.host = value.host;
+  if (['ilinkai.weixin.qq.com', 'novac2c.cdn.weixin.qq.com', 'api.sgroup.qq.com'].includes(value.host)) result.host = value.host;
   if (value.dependencies && typeof value.dependencies === 'object') {
     const dependencies = {};
-    for (const name of ['dingtalkStream', 'axios', 'httpsProxyAgent', 'agentBase', 'qrcode', 'pngjs', 'zlib']) {
+    for (const name of ['qrcode', 'pngjs', 'zlib']) {
       const version = value.dependencies[name];
       if (typeof version === 'string' && /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(version) && version.length <= 80) dependencies[name] = version;
     }
@@ -146,7 +146,7 @@ export function normalizeDiagnosticDetails(value) {
   return result;
 }
 
-export const DIAGNOSTIC_CHANNELS = Object.freeze(['weixin', 'feishu', 'dingtalk', 'wecom', 'qq', 'slack', 'telegram', 'discord', 'whatsapp', 'wecom-app', 'imessage', 'email', 'office']);
+export const DIAGNOSTIC_CHANNELS = Object.freeze(['weixin', 'qq']);
 
 export function diagnosticFields(value) {
   if (!value?.details) return {};

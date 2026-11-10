@@ -10,14 +10,8 @@ import {
 import { createHarnessCommandExecutor } from '../plugin-src/host/harness-command-executor.mjs';
 
 const PRODUCTION_FILES = [
-  'plugin-src/host/channels/feishu/production.mjs',
   'plugin-src/host/channels/weixin/production.mjs',
-  'plugin-src/host/channels/dingtalk/production.mjs',
-  'plugin-src/host/channels/wecom/production.mjs',
   'plugin-src/host/channels/qq/production.mjs',
-  'plugin-src/host/channels/slack/production.mjs',
-  'plugin-src/host/channels/shared/production.mjs',
-  'plugin-src/host/channels/whatsapp/production.mjs',
 ];
 
 function state(sessionId = 'session-one') {
@@ -293,17 +287,14 @@ test('Host command executor honours cancellation before retrying the legacy endp
   assert.equal(attempts, 1);
 });
 
-test('all nine production channels receive the Host command executor', async () => {
+test('all remaining production channels receive the Host command executor', async () => {
   for (const path of PRODUCTION_FILES) {
     const source = await readFile(new URL(`../${path}`, import.meta.url), 'utf8');
     assert.match(source, /createHarnessCommandExecutor\(ctx, internals\.commandExecutor\)/, path);
     assert.match(source, /commandExecutor \? \{ commandExecutor \} : \{\}/, path);
   }
 
-  for (const channel of [
-    'feishu', 'weixin', 'dingtalk', 'wecom', 'qq',
-    'slack', 'telegram', 'discord', 'whatsapp',
-  ]) {
+  for (const channel of ['weixin', 'qq']) {
     const source = await readFile(
       new URL(`../plugin-src/host/channels/${channel}/index.mjs`, import.meta.url),
       'utf8',
@@ -312,7 +303,7 @@ test('all nine production channels receive the Host command executor', async () 
   }
 });
 
-test('all nine production channels use channel presets only as bot creation defaults', async () => {
+test('all remaining production channels use channel presets only as bot creation defaults', async () => {
   for (const path of PRODUCTION_FILES) {
     const source = await readFile(new URL(`../${path}`, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /\bagentPreset:\s*config\.agentPreset/, path);
@@ -343,15 +334,4 @@ test('all nine production channels use channel presets only as bot creation defa
     );
   }
 
-  for (const channel of ['telegram', 'discord']) {
-    const source = await readFile(
-      new URL(`../plugin-src/host/channels/${channel}/production.mjs`, import.meta.url),
-      'utf8',
-    );
-    assert.match(
-      source,
-      /createTokenProductionController\(ctx, config, internals,/,
-      `${channel} must delegate to the shared production assembly`,
-    );
-  }
 });

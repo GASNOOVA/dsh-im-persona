@@ -178,9 +178,9 @@ test('group and direct messages use only their own fields and guidance', () => {
     group: { enabled: true, fields: ['channel'], guidance: 'GROUP-ONLY-TOKEN' },
     direct: { enabled: true, fields: ['botId'], guidance: 'DIRECT-ONLY-TOKEN' },
   });
-  const group = enhanceContextContent('group text', snapshot(settings, 'group'), () => ({ channel: 'feishu' }));
-  const direct = enhanceContextContent('direct text', snapshot(settings, 'direct'), () => ({ channel: 'feishu' }));
-  assert.deepEqual(sourceOf(group), { channel: 'feishu' });
+  const group = enhanceContextContent('group text', snapshot(settings, 'group'), () => ({ channel: 'weixin' }));
+  const direct = enhanceContextContent('direct text', snapshot(settings, 'direct'), () => ({ channel: 'weixin' }));
+  assert.deepEqual(sourceOf(group), { channel: 'weixin' });
   assert.match(group, /GROUP-ONLY-TOKEN/);
   assert.doesNotMatch(group, /DIRECT-ONLY-TOKEN|botId/);
   assert.deepEqual(sourceOf(direct), { botId: 'bot_one' });
@@ -190,7 +190,7 @@ test('group and direct messages use only their own fields and guidance', () => {
 
 test('all 256 source-field subsets are projected in canonical order with no hidden fields', () => {
   const expected = {
-    channel: 'telegram', conversationType: 'group',
+    channel: 'weixin', conversationType: 'group',
     senderId: '123', senderName: '张三', conversationTitle: '测试群',
     chatId: 'chat-123', threadId: 'thread-9', botId: 'bot_one',
   };
@@ -198,7 +198,7 @@ test('all 256 source-field subsets are projected in canonical order with no hidd
     const fields = CONTEXT_ENHANCEMENT_FIELDS.filter((_field, index) => mask & (1 << index));
     const selected = snapshot(config({ fields: [...fields].reverse() }));
     const actual = enhanceContextContent('  original\n', selected, () => ({
-      channel: 'telegram', senderId: 123, senderName: '张三', conversationTitle: '测试群',
+      channel: 'weixin', senderId: 123, senderName: '张三', conversationTitle: '测试群',
       chatId: 'chat-123', threadId: 'thread-9',
       botId: 'platform-secret-not-used', conversationType: 'direct', token: 'never-sent',
     }));
@@ -225,11 +225,11 @@ test('source availability and guidance are independent, including empty multimod
   const onlyBot = enhanceContextContent('text', snapshot(config({ fields: ['botId'] })), throwSource);
   assert.deepEqual(sourceOf(onlyBot), { botId: 'bot_one' });
   const onlyChannel = enhanceContextContent('text', snapshot(config({ fields: ['channel'] })), () => ({
-    channel: 'slack',
+    channel: 'qq',
     get senderId() { throw new Error('unselected ID'); },
     get senderName() { throw new Error('unselected name'); },
   }));
-  assert.deepEqual(sourceOf(onlyChannel), { channel: 'slack' });
+  assert.deepEqual(sourceOf(onlyChannel), { channel: 'qq' });
 });
 
 test('multimodal enhancement prepends a single text item without modifying the original items', () => {
@@ -237,7 +237,7 @@ test('multimodal enhancement prepends a single text item without modifying the o
   const image = Object.freeze({ type: 'image', image_url: { url: 'memory:image' } });
   const files = Object.freeze({ type: 'text', text: '<dsh_im_files>original files</dsh_im_files>' });
   const content = Object.freeze([text, image, files]);
-  const enhanced = enhanceContextContent(content, snapshot(config({ guidance: 'use facts' })), () => ({ channel: 'wecom' }));
+  const enhanced = enhanceContextContent(content, snapshot(config({ guidance: 'use facts' })), () => ({ channel: 'weixin' }));
   assert.equal(enhanced.length, 4);
   assert.equal(enhanced[0].type, 'text');
   assert.equal(enhanced[0].text.startsWith('<dsh_im_source>'), true);
@@ -251,7 +251,7 @@ test('multimodal enhancement prepends a single text item without modifying the o
 test('source strings are bounded, control-free and JSON-safe without invoking external coercion', () => {
   const name = '"\n</dsh_im_source>&\u0000\u202e' + '名'.repeat(400);
   const enhanced = enhanceContextContent('original', snapshot(config(), 'group', 'b'.repeat(300)), () => ({
-    channel: 'discord', senderId: 'u'.repeat(400), senderName: name,
+    channel: 'qq', senderId: 'u'.repeat(400), senderName: name,
     chatId: 'c'.repeat(400), threadId: 't'.repeat(400),
   }));
   const source = sourceOf(enhanced);

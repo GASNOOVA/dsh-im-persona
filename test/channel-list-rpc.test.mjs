@@ -22,167 +22,48 @@ async function putState(root, channel, botId, value, container = 'bots') {
   await writeFile(join(dir, 'state.json'), typeof value === 'string' ? value : JSON.stringify(value));
 }
 
-test('buildList reads standard bot, Weixin account, and configured Feishu legacy state', async t => {
+test('buildList reads standard bots and Weixin accounts in a stable order', async t => {
   const root = await temporaryHome(t);
-  await putState(root, 'matrix', 'matrix-bot', {
-    sessions: { 'group:room:!room:example.org': 'session-matrix' },
+  await putState(root, 'qq', 'qq-bot-b', {
+    sessions: { z_group: 'session-z', a_group: 'session-a' },
   });
-  await putState(root, 'telegram', 'telegram-a', {
-    sessions: { z_chat: 'session-z', a_chat: 'session-a' },
-  });
-  await putState(root, 'telegram', 'telegram-empty', { sessions: {} });
-  await putState(root, 'wecom-app', 'wecom-a', {
-    sessions: { 'group:room:42': 'session-wecom' },
-  });
+  await putState(root, 'qq', 'qq-empty', { sessions: {} });
   await putState(root, 'weixin', 'wx-account', {
-    sessions: { 'direct:wx-user': 'session-weixin' },
+    sessions: { 'p2p:wx-user': 'session-weixin' },
   }, 'accounts');
-  await putState(root, 'feishu', 'feishu-modern', {
-    sessions: { 'group:modern': 'session-feishu-modern' },
+  await putState(root, 'qq', 'qq-bot-a', {
+    sessions: { 'group:g2': 'session-qq' },
   });
-  await putState(root, 'feishu', 'feishu-legacy', {
-    sessions: { decoy: 'session-feishu-decoy' },
-  });
-  const feishuRoot = join(root, 'integrations', 'dsh-feishu');
-  await mkdir(feishuRoot, { recursive: true });
-  await writeFile(join(feishuRoot, 'config.json'), JSON.stringify({
-    version: 2,
-    bots: [
-      { id: 'feishu-modern', appId: 'cli-modern', secretRef: 'FEISHU_MODERN_SECRET', ownerOpenIds: ['ou-modern'] },
-      { id: 'feishu-legacy', appId: 'cli-legacy', secretRef: 'DSH_FEISHU_APP_SECRET', ownerOpenIds: ['ou-legacy'] },
-    ],
-  }));
-  await writeFile(join(feishuRoot, 'state.json'), JSON.stringify({
-    sessions: { 'group:legacy': 'session-feishu-legacy' },
-  }));
-  await putState(root, 'discord', 'broken-bot', '{not-json');
+  await putState(root, 'qq', 'broken-bot', '{not-json');
 
   // A legacy/top-level JSON lookalike must not be mistaken for a bot binding.
-  await writeFile(join(root, 'integrations', 'dsh-telegram', 'decoy.json'), JSON.stringify({
+  await writeFile(join(root, 'integrations', 'dsh-qq', 'decoy.json'), JSON.stringify({
     sessions: { decoy: 'must-not-appear' },
   }));
 
   const result = await buildList({ dshHome: root });
-  assert.deepEqual(result.channels.map(group => group.channel), ['feishu', 'matrix', 'telegram', 'wecom-app', 'weixin']);
-  assert.equal(result.scannedFiles, 7);
+  assert.deepEqual(result.channels.map(group => group.channel), ['qq', 'weixin']);
+  assert.equal(result.scannedFiles, 4);
   assert.equal(result.warnings.length, 1);
-  assert.match(result.warnings[0], /dsh-discord\/broken-bot/);
+  assert.match(result.warnings[0], /dsh-qq\/broken-bot/);
 
-  const feishu = result.channels[0];
-  assert.deepEqual(feishu.sessions, [
-    { key: 'group:legacy', sessionId: 'session-feishu-legacy', botId: 'feishu-legacy' },
-    { key: 'group:modern', sessionId: 'session-feishu-modern', botId: 'feishu-modern' },
+  const qq = result.channels[0];
+  assert.deepEqual(qq.sessions, [
+    { key: 'a_group', sessionId: 'session-a', botId: 'qq-bot-b' },
+    { key: 'group:g2', sessionId: 'session-qq', botId: 'qq-bot-a' },
+    { key: 'z_group', sessionId: 'session-z', botId: 'qq-bot-b' },
   ]);
+  assert.ok(!qq.sessions.some(row => row.sessionId === 'must-not-appear'));
 
-  const matrix = result.channels[1];
-  assert.deepEqual(matrix.sessions, [{
-    key: 'group:room:!room:example.org', sessionId: 'session-matrix', botId: 'matrix-bot',
-  }]);
-
-  const telegram = result.channels[2];
-  assert.deepEqual(telegram.sessions.map(row => row.key), ['a_chat', 'z_chat']);
-  assert.ok(telegram.sessions.every(row => row.botId === 'telegram-a'));
-  assert.ok(!telegram.sessions.some(row => row.sessionId === 'must-not-appear'));
-
-  const wecom = result.channels[3];
-  assert.equal(wecom.sessions[0].botId, 'wecom-a');
-  assert.equal(wecom.sessions[0].sessionId, 'session-wecom');
-
-  const weixin = result.channels[4];
+  const weixin = result.channels[1];
   assert.deepEqual(weixin.sessions, [
-    { key: 'direct:wx-user', sessionId: 'session-weixin', botId: 'wx-account' },
+    { key: 'p2p:wx-user', sessionId: 'session-weixin', botId: 'wx-account' },
   ]);
 });
 
 test('buildList returns an empty directory when integrations do not exist', async t => {
   const root = await temporaryHome(t);
   assert.deepEqual(await buildList({ dshHome: root }), { channels: [], scannedFiles: 0, warnings: [] });
-});
-
-test('buildList derives the Feishu v1 legacy identity without migrating its config', async t => {
-  const root = await temporaryHome(t);
-  const integrationRoot = join(root, 'integrations', 'dsh-feishu');
-  await mkdir(integrationRoot, { recursive: true });
-  const configText = JSON.stringify({ appId: 'cli_v1_legacy', ownerOpenId: 'ou_owner' });
-  await writeFile(join(integrationRoot, 'config.json'), configText);
-  await writeFile(join(integrationRoot, 'state.json'), JSON.stringify({
-    sessions: { 'group:legacy-v1': 'session-feishu-v1' },
-  }));
-  const result = await buildList({ dshHome: root });
-  const botId = `bot_${createHash('sha256').update('cli_v1_legacy').digest('hex').slice(0, 24)}`;
-  assert.deepEqual(result.channels, [{ channel: 'feishu', sessions: [
-    { key: 'group:legacy-v1', sessionId: 'session-feishu-v1', botId },
-  ] }]);
-  assert.equal(await readFile(join(integrationRoot, 'config.json'), 'utf8'), configText);
-});
-
-test('buildList trims Feishu v2 legacy identity fields without rewriting config', async t => {
-  const root = await temporaryHome(t);
-  const integrationRoot = join(root, 'integrations', 'dsh-feishu');
-  await putState(root, 'feishu', 'feishu-legacy', {
-    sessions: { decoy: 'session-feishu-decoy' },
-  });
-  const configText = JSON.stringify({
-    version: 2,
-    bots: [{
-      id: '  feishu-legacy  ',
-      appId: '  cli-legacy  ',
-      secretRef: '  DSH_FEISHU_APP_SECRET  ',
-      ownerOpenIds: ['ou-legacy'],
-    }],
-  });
-  await writeFile(join(integrationRoot, 'config.json'), configText);
-  await writeFile(join(integrationRoot, 'state.json'), JSON.stringify({
-    sessions: { 'group:legacy': 'session-feishu-legacy' },
-  }));
-  const result = await buildList({ dshHome: root });
-  assert.deepEqual(result.channels, [{ channel: 'feishu', sessions: [
-    { key: 'group:legacy', sessionId: 'session-feishu-legacy', botId: 'feishu-legacy' },
-  ] }]);
-  assert.equal(await readFile(join(integrationRoot, 'config.json'), 'utf8'), configText);
-});
-
-test('buildList trims Feishu v1 legacy identity fields without rewriting config', async t => {
-  const root = await temporaryHome(t);
-  const integrationRoot = join(root, 'integrations', 'dsh-feishu');
-  await putState(root, 'feishu', 'feishu-v1-id', {
-    sessions: { decoy: 'session-feishu-decoy' },
-  });
-  const configText = JSON.stringify({
-    id: '  feishu-v1-id  ',
-    appId: '  cli-v1-legacy  ',
-    secretRef: '  DSH_FEISHU_APP_SECRET  ',
-    ownerOpenId: 'ou-owner',
-  });
-  await writeFile(join(integrationRoot, 'config.json'), configText);
-  await writeFile(join(integrationRoot, 'state.json'), JSON.stringify({
-    sessions: { 'group:legacy-v1': 'session-feishu-v1' },
-  }));
-  const result = await buildList({ dshHome: root });
-  assert.deepEqual(result.channels, [{ channel: 'feishu', sessions: [
-    { key: 'group:legacy-v1', sessionId: 'session-feishu-v1', botId: 'feishu-v1-id' },
-  ] }]);
-  assert.equal(await readFile(join(integrationRoot, 'config.json'), 'utf8'), configText);
-});
-
-test('buildList ignores Feishu root state without a legacy bot config', async t => {
-  const root = await temporaryHome(t);
-  await putState(root, 'feishu', 'feishu-modern', {
-    sessions: { 'group:modern': 'session-feishu-modern' },
-  });
-  const integrationRoot = join(root, 'integrations', 'dsh-feishu');
-  await writeFile(join(integrationRoot, 'config.json'), JSON.stringify({
-    version: 2,
-    bots: [{ id: 'feishu-modern', appId: 'cli-modern', secretRef: 'FEISHU_MODERN_SECRET', ownerOpenIds: ['ou-modern'] }],
-  }));
-  await writeFile(join(integrationRoot, 'state.json'), JSON.stringify({
-    sessions: { decoy: 'session-feishu-decoy' },
-  }));
-  const result = await buildList({ dshHome: root });
-  assert.deepEqual(result.channels, [{ channel: 'feishu', sessions: [
-    { key: 'group:modern', sessionId: 'session-feishu-modern', botId: 'feishu-modern' },
-  ] }]);
-  assert.equal(result.scannedFiles, 1);
 });
 
 test('list.channels returns its payload in the connection RPC value field', async t => {

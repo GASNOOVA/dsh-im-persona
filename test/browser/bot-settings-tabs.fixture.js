@@ -15,7 +15,7 @@ window.addEventListener('error', (event) => errors.push(event.message));
 window.addEventListener('unhandledrejection', (event) => errors.push(String(event.reason)));
 const app = document.getElementById('app');
 const root = createRoot(app);
-const render = (channel = 'feishu') => root.render(React.createElement('div', {
+const render = (channel = 'qq') => root.render(React.createElement('div', {
   className: 'dim-page dim-panel', style: { padding: 0, border: 0 },
 },
   React.createElement(DeliveryTargetSettingsPage, {
@@ -88,7 +88,7 @@ async function run() {
   render('weixin');
   await until(() => tabs().length === 2 && arrows().length === 0, 'Two-tab channel retained overflow controls');
   render();
-  await until(() => tabs().length === 5 && arrows().length === 2, 'Feishu tabs did not restore');
+  await until(() => tabs().length === 5 && arrows().length === 2, 'Delivery tabs did not restore');
   await press('End', 4);
   await resize(320);
   assert(errors.length === 0, `Browser errors: ${errors.join('; ')}`);

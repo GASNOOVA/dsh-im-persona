@@ -8,8 +8,10 @@
 // the untouched user text. Pairing is decided by message identity, never by
 // inbox position, so concurrent prompts cannot swap their contexts.
 //
-// The source block describes the message, so it follows it; a quoted reply is
-// material the user pointed at, so it precedes it.
+// The persona block is the bot's own character setting, written by the channel
+// ahead of the message body, so it is the outermost block and becomes the
+// user's own instructions row. The source block describes the message, so it
+// follows it; a quoted reply is material the user pointed at, so it precedes it.
 //
 // Nothing here decides what configuration is in force. A channel writes the
 // guidance its own captured settings produced, and publishes that same captured
@@ -24,6 +26,7 @@ import {
   INJECTED_CONTEXT_SEPARATOR,
   INJECTED_CONTEXT_TAGS,
 } from './context-enhancement.mjs';
+import { PERSONA_TAG, isPersonaBody } from './persona.mjs';
 
 /** Source plugin name recorded on every split-out context message. */
 export const INJECTED_CONTEXT_PLUGIN = 'dsh-im';
@@ -224,6 +227,29 @@ function delimited(text, cursor, open, close) {
  */
 function blockAt(text, cursor, labels) {
   const tags = INJECTED_CONTEXT_TAGS;
+  // The producer writes the persona block first (outermost), so it is tried
+  // first. The producer also frames the body with one newline on each side; a
+  // literal that merely mentions the tag (or wraps it without the framing)
+  // stays ordinary user text.
+  const persona = delimited(text, cursor, PERSONA_TAG.open, PERSONA_TAG.close);
+  if (persona !== null) {
+    const framed = text[cursor + PERSONA_TAG.open.length] === '\n'
+      && text[persona.end - PERSONA_TAG.close.length - 1] === '\n';
+    const value = framed ? persona.body.slice(1, -1) : null;
+    if (!framed || !isPersonaBody(value)) return null;
+    return {
+      end: persona.end,
+      block: {
+        position: 'before',
+        form: 'instructions',
+        summary: null,
+        text: text.slice(cursor, persona.end),
+        // The raw body (without the framing newlines); kept for a future
+        // system-prompt de-duplication (see docs/改造/02-人设能力.md §4.8).
+        value,
+      },
+    };
+  }
   const source = delimited(text, cursor, tags.sourceOpen, tags.sourceClose);
   if (source !== null) {
     // A body that is not our own JSON is user text that happens to use the tag.

@@ -38,6 +38,7 @@ import {
   captureContextEnhancementSource,
   enhanceContextContent,
 } from '../shared/context-enhancement.mjs';
+import { capturePersona, injectPersonaContent } from '../shared/persona.mjs';
 import {
   BatchInputManager,
   batchInputBusyMessage,
@@ -480,6 +481,7 @@ export class QqHarnessBridge {
   #state;
   #deferred;
   #contextEnhancement;
+  #persona;
   #groupHistory;
   #accessPolicy;
   #status;
@@ -509,6 +511,7 @@ export class QqHarnessBridge {
     harness,
     state,
     contextEnhancement,
+    persona,
     groupHistory,
     accessPolicy,
     status = createQqBridgeStatus(),
@@ -530,6 +533,7 @@ export class QqHarnessBridge {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#persona = persona;
     this.#groupHistory = groupHistory;
     this.#accessPolicy = accessPolicy;
     this.#status = status;
@@ -1009,7 +1013,10 @@ export class QqHarnessBridge {
           senderName: message.kind === 'group' ? message.senderName : undefined,
           chatId: message.kind === 'group' ? message.groupOpenid : message.senderId,
         }),
-      ) };
+      ),
+      // Only /steer of the control commands renders a user instruction.
+      persona: capturePersona(this.#persona),
+    };
     // Existing runners own all Host mutations and control authorization.
     const execute = async () => {
       this.#signal?.throwIfAborted();
@@ -1089,6 +1096,8 @@ export class QqHarnessBridge {
           chatId: message.kind === 'group' ? message.groupOpenid : message.senderId,
         }),
       ),
+      // Only /steer of the control commands renders a user instruction.
+      persona: capturePersona(this.#persona),
     });
     if (result?.stopped) {
       await Promise.allSettled([
@@ -1341,6 +1350,13 @@ export class QqHarnessBridge {
           chatId: message.kind === 'group' ? message.groupOpenid : message.senderId,
         }));
         contextEnhanced = content !== originalContent;
+      }
+      // Persona wraps everything else; the Host splits the block into its own
+      // instructions row, and it stays inline for a Harness without pre-step.
+      const persona = capturePersona(this.#persona);
+      if (persona) {
+        content = injectPersonaContent(content ?? text, persona);
+        contextEnhanced = true;
       }
       // QQ stream_messages can acknowledge a final frame without rendering it in
       // some C2C clients. Standard Markdown delivery is the reliable reply path.

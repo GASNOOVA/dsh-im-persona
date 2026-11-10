@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { BotWorkspaceStore } from '../../../src/channels/shared/bot-workspace-store.mjs';
 
-const channels = ['weixin', 'wecom', 'wecom-app', 'feishu', 'dingtalk', 'qq', 'slack', 'telegram', 'discord', 'whatsapp', 'imessage'];
+const channels = ['weixin', 'qq'];
 
 for (const channel of channels) {
   test(channel + ' creates the IM directory only for bots that select it, including after reload', async (t) => {

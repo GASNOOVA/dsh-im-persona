@@ -8,6 +8,7 @@ import { AccountSettingsToggle, CollapsibleAccountSection } from '../shared/coll
 import { channelName, h, localizeTemplate } from '../../i18n.js';
 import { WorkspaceEditor } from '../../workspace-editor.js';
 import { ContextEnhancementEditor } from '../../context-enhancement.js';
+import { PersonaEditor } from '../../persona-settings.js';
 import {
   AgentPresetCatalogContext,
   AgentPresetEditor,
@@ -19,13 +20,14 @@ import {
   ModelEditor,
 } from '../../model-setting.js';
 import { useWorkspaceSnapshotFence } from '../../workspace-snapshot-fence.js';
+import { PERSONA_ENDPOINTS } from '../../../../src/channels/shared/persona.mjs';
 import {
   BotSettingsButton,
   BotStatusMeta,
   ChannelListHeading,
   LastMessageErrorSummary,
 } from '../../channel-card-meta.js';
-import { installDingtalkStyles } from '../dingtalk/styles.js';
+import { installBotSettingsStyles } from '../shared/bot-settings-styles.js';
 import {
   QQ_ENDPOINTS,
   connectionTestFeedback,
@@ -179,6 +181,7 @@ export function AccountCard({
   onModelSave,
   onAgentPresetSave,
   onContextEnhancementSave,
+  onPersonaSave,
   onRequestRemove,
   onConfirmRemove,
   onCancelRemove,
@@ -238,6 +241,11 @@ export function AccountCard({
         disabled: Boolean(busy),
         onSave: onContextEnhancementSave,
       }),
+      h(PersonaEditor, {
+        persona: account.persona,
+        disabled: Boolean(busy),
+        onSave: onPersonaSave,
+      }),
       h('div', { className: 'ddt-accountFooter dim-cardFooter' },
         h('div', { className: 'dim-cardFooterLayout' },
           h('div', { className: 'ddt-actions dim-cardActions' },
@@ -261,7 +269,7 @@ export function AccountCard({
     }) : null);
 }
 
-export function QqSettingsTab({ rpcCall }) {
+export function QqSettingsTab({ rpcCall, personaRpcCall }) {
   const [operationError, setOperationError] = React.useState(null);
   const [model, setModel] = React.useState({
     phase: 'loading', bots: [], totals: { configured: 0, connected: 0 }, error: null,
@@ -281,13 +289,13 @@ export function QqSettingsTab({ rpcCall }) {
   const addButtonRef = React.useRef(null);
 
   React.useEffect(() => {
-    const disposeDingtalk = installDingtalkStyles();
+    const disposeBotSettings = installBotSettingsStyles();
     const disposeQq = installQqStyles();
     mounted.current = true;
     return () => {
       mounted.current = false;
       disposeQq();
-      disposeDingtalk();
+      disposeBotSettings();
     };
   }, []);
 
@@ -461,6 +469,50 @@ export function QqSettingsTab({ rpcCall }) {
     }
   }, [invoke, loadStatus, workspaceFence]);
 
+  const savePersona = React.useCallback(async (account, persona) => {
+    // Persona has its own management channel and returns { persona } instead of
+    // the channel status snapshot, so it cannot reuse botAction.
+    setBusyByBot((current) => ({ ...current, [account.botId]: 'persona' }));
+    setFeedbackByBot((current) => {
+      const next = { ...current };
+      delete next[account.botId];
+      return next;
+    });
+    try {
+      if (typeof personaRpcCall !== 'function') {
+        throw new Error('无法读取或保存人设设置，请稍后重试。');
+      }
+      const value = unwrapRpcResult(await personaRpcCall(
+        PERSONA_ENDPOINTS.set,
+        { botId: account.botId, persona },
+      ));
+      if (mounted.current) {
+        setModel((current) => ({
+          ...current,
+          bots: current.bots.map((bot) => (bot.botId === account.botId
+            ? { ...bot, persona: value.persona }
+            : bot)),
+        }));
+      }
+    } catch (error) {
+      if (mounted.current) {
+        setFeedbackByBot((current) => ({
+          ...current,
+          [account.botId]: typeof error?.message === 'string' ? error.message : String(error),
+        }));
+      }
+      throw error;
+    } finally {
+      if (mounted.current) {
+        setBusyByBot((current) => {
+          const next = { ...current };
+          delete next[account.botId];
+          return next;
+        });
+      }
+    }
+  }, [personaRpcCall]);
+
   const reconnect = React.useCallback(async (account) => {
     setFeedbackByBot((current) => {
       const next = { ...current };
@@ -543,6 +595,7 @@ export function QqSettingsTab({ rpcCall }) {
               QQ_ENDPOINTS.setContextEnhancement,
               { botId: account.botId, config },
             ),
+            onPersonaSave: (persona) => savePersona(account, persona),
             onRequestRemove: () => setRemoveTarget(account.botId),
             onCancelRemove: () => setRemoveTarget(null),
             onConfirmRemove: async () => {

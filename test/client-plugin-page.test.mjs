@@ -9,7 +9,7 @@ import { apply as applyClient } from '../plugin-src/client/index.js';
 import { CHANNEL_SESSIONS_PANEL_ID } from '../plugin-src/client/im-channels.js';
 
 const { act, create } = TestRenderer;
-const packageName = '@xmanrui/dsh-im';
+const packageName = 'dsh-im-persona';
 const bundle = { kind: 'bundle', pkg: { name: packageName } };
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -93,7 +93,7 @@ async function start(t, { ready = true, sidebarVisible = true } = {}) {
     },
     element(name, props = {}, language = 'zh') {
       const { options, component } = slots.entries.get(name);
-      assert.equal(options.locale, 'dsh-im');
+      assert.equal(options.locale, 'dsh-im-persona');
       return React.createElement(component, {
         ...options.inject?.(), ...props,
         t: (key) => language === 'en' ? en[key] : key,

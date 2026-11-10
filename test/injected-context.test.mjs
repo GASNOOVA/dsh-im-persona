@@ -26,7 +26,7 @@ import {
 } from '../src/channels/shared/im-source-guidance.mjs';
 import { installInjectedContext } from '../plugin-src/host/injected-context.mjs';
 
-const SOURCE = { channel: 'feishu', senderName: '张三' };
+const SOURCE = { channel: 'weixin', senderName: '张三' };
 
 /** One enabled group scope, as a bot's settings provider would report it. */
 function snapshot({ fields = ['channel'], guidance = '' } = {}) {
@@ -51,7 +51,7 @@ function enhancedText(text, options, source) {
 }
 
 /** One claimed plain-text prompt, carrying the prefix as a channel writes it. */
-function imTextMessage({ id, text, options, source, rpcId = `feishu-${id}` }) {
+function imTextMessage({ id, text, options, source, rpcId = `weixin-${id}` }) {
   const produced = enhancedText(text, options, source);
   assert.equal(typeof produced, 'string');
   return {
@@ -91,7 +91,7 @@ test('the splitter is the exact inverse of the producer on the text path', () =>
   assert.notEqual(split, null);
   assert.deepEqual(split.blocks.map((block) => block.form), ['notice', 'instructions']);
   assert.equal(split.rest, '原始消息');
-  assert.equal(split.blocks[0].summary, 'feishu · group · 张三 · 产品群');
+  assert.equal(split.blocks[0].summary, 'weixin · group · 张三 · 产品群');
   assert.equal(split.blocks[1].summary, null);
   assert.equal(split.blocks[0].text.startsWith(INJECTED_CONTEXT_TAGS.sourceOpen), true);
   assert.equal(split.blocks[0].text.endsWith(INJECTED_CONTEXT_TAGS.sourceClose), true);
@@ -108,7 +108,7 @@ test('the splitter is the exact inverse of the producer on the text path', () =>
 test('the splitter removes only the prefix part on the structured path', () => {
   const original = [{ type: 'text', text: '看图' }, { type: 'image', attachment: { id: 'img_1' } }];
   const produced = enhanceContextContent(original, snapshot({ fields: ['channel'] }), () => ({
-    channel: 'feishu',
+    channel: 'weixin',
   }));
   assert.deepEqual(produced.slice(1), original);
   const split = splitLeadingInjectedContext(produced[0].text);
@@ -140,8 +140,8 @@ test('text that is not the producer prefix is never treated as context', () => {
     null,
     42,
     '<dsh_im_source>not json</dsh_im_source>',
-    '<dsh_im_source>{"channel":"feishu"}',
-    '前缀 <dsh_im_source>{"channel":"feishu"}</dsh_im_source>',
+    '<dsh_im_source>{"channel":"weixin"}',
+    '前缀 <dsh_im_source>{"channel":"weixin"}</dsh_im_source>',
     '<dsh_im_source_guidance>body</dsh_im_source_guidance>',
     '<dsh_im_source_guidance>\nbody</dsh_im_source_guidance>',
   ]) {
@@ -194,15 +194,15 @@ test('the summary falls back to the sender id and stays bounded', () => {
 test('each user message keeps its own context, whatever the batch order', () => {
   const first = imTextMessage({
     id: 'u1', text: '一号', options: { fields: ['channel', 'senderName'] },
-    source: { channel: 'feishu', senderName: '张三' },
+    source: { channel: 'weixin', senderName: '张三' },
   });
   const second = imTextMessage({
     id: 'u2', text: '二号', options: { fields: ['channel', 'senderName'] },
-    source: { channel: 'dingtalk', senderName: '李四' },
+    source: { channel: 'qq', senderName: '李四' },
   });
   const third = imTextMessage({
     id: 'u3', text: '三号', options: { fields: ['channel', 'senderName'] },
-    source: { channel: 'slack', senderName: '王五' },
+    source: { channel: 'qq', senderName: '王五' },
   });
   const rewritten = rewriteInjectedContextMessages([first, second, third], {
     newId: identityFactory(),
@@ -211,20 +211,20 @@ test('each user message keeps its own context, whatever the batch order', () => 
   assert.deepEqual(rewritten.map((message) => (message.source.kind === `plugin:${INJECTED_CONTEXT_PLUGIN}`
     ? `context:${message.source.summary}`
     : `user:${message.id}:${message.content[0].text}`)), [
-    'user:u1:一号', 'context:feishu · 张三',
-    'user:u2:二号', 'context:dingtalk · 李四',
-    'user:u3:三号', 'context:slack · 王五',
+    'user:u1:一号', 'context:weixin · 张三',
+    'user:u2:二号', 'context:qq · 李四',
+    'user:u3:三号', 'context:qq · 王五',
   ]);
   // The prompt identity survives on the user text, so pairing stays auditable.
   assert.deepEqual(
     rewritten.filter((message) => message.source.kind === 'user')
       .map((message) => message.source.rpcId),
-    ['feishu-u1', 'feishu-u2', 'feishu-u3'],
+    ['weixin-u1', 'weixin-u2', 'weixin-u3'],
   );
   assert.deepEqual(rewritten.slice(1, 2).map((message) => message.source), [{
     kind: `plugin:${INJECTED_CONTEXT_PLUGIN}`,
     form: 'notice',
-    summary: 'feishu · 张三',
+    summary: 'weixin · 张三',
   }]);
   assert.deepEqual(rewritten.map((message) => message.role).filter((role) => role !== 'user'), []);
 });
@@ -234,7 +234,7 @@ test('source, guidance and reply messages carry producer-owned attribution', () 
     id: 'u-v4',
     text: `${replyText({ authorName: '张三', content: '被引用' })}\n\n原始消息`,
     options: { fields: ['channel'], guidance: '严肃一点' },
-    source: { channel: 'feishu' },
+    source: { channel: 'weixin' },
   });
   for (const plugin of [INJECTED_CONTEXT_PLUGIN, 'another-producer']) {
     const rewritten = rewriteInjectedContextMessages([message], {
@@ -243,7 +243,7 @@ test('source, guidance and reply messages carry producer-owned attribution', () 
     assert.deepEqual(rewritten.map((entry) => entry.source), [
       { kind: `plugin:${plugin}`, form: 'notice', summary: '引用 · 张三' },
       message.source,
-      { kind: `plugin:${plugin}`, form: 'notice', summary: 'feishu' },
+      { kind: `plugin:${plugin}`, form: 'notice', summary: 'weixin' },
       { kind: `plugin:${plugin}`, form: 'instructions' },
     ]);
     assert.equal(rewritten[1].id, message.id);
@@ -254,13 +254,13 @@ test('source, guidance and reply messages carry producer-owned attribution', () 
 
 test('only the messages that carry a prefix are touched', () => {
   const prefixed = imTextMessage({
-    id: 'u1', text: '一号', options: { fields: ['channel'] }, source: { channel: 'feishu' },
+    id: 'u1', text: '一号', options: { fields: ['channel'] }, source: { channel: 'weixin' },
   });
   const plain = {
     id: 'u0',
     role: 'user',
     content: [{ type: 'text', text: '没有前缀' }],
-    source: { kind: 'user', rpcId: 'feishu-u0' },
+    source: { kind: 'user', rpcId: 'weixin-u0' },
   };
   // A prompt identity without the prefix (every non-IM caller) is left alone.
   const gui = { ...plain, id: 'g0', source: { kind: 'user' } };
@@ -276,21 +276,21 @@ test('only the messages that carry a prefix are touched', () => {
 
 test('a prefix with no user text left keeps the original message', () => {
   const produced = enhanceContextContent([], snapshot({ fields: ['channel'] }), () => ({
-    channel: 'feishu',
+    channel: 'weixin',
   }));
   assert.deepEqual(produced, [{
     type: 'text',
-    text: `${INJECTED_CONTEXT_TAGS.sourceOpen}{"channel":"feishu"}`
+    text: `${INJECTED_CONTEXT_TAGS.sourceOpen}{"channel":"weixin"}`
       + `${INJECTED_CONTEXT_TAGS.sourceClose}`,
   }]);
-  const orphan = { id: 'e1', role: 'user', content: produced, source: { kind: 'user', rpcId: 'feishu-e1' } };
+  const orphan = { id: 'e1', role: 'user', content: produced, source: { kind: 'user', rpcId: 'weixin-e1' } };
   assert.equal(rewriteInjectedContextMessages([orphan]), null);
 });
 
 test('a rewritten batch is a no-op when it is rewritten again', () => {
   const newId = identityFactory();
   const message = imTextMessage({
-    id: 'u1', text: '一号', options: { fields: ['channel'], guidance: 'g' }, source: { channel: 'feishu' },
+    id: 'u1', text: '一号', options: { fields: ['channel'], guidance: 'g' }, source: { channel: 'weixin' },
   });
   const rewritten = rewriteInjectedContextMessages([message], { newId });
   assert.notEqual(rewritten, null);
@@ -312,7 +312,7 @@ test('the Host installer pairs context on the step it admits', async () => {
   assert.deepEqual(preStep.options, { global: true });
 
   const message = imTextMessage({
-    id: 'u1', text: '一号', options: { fields: ['channel'] }, source: { channel: 'feishu' },
+    id: 'u1', text: '一号', options: { fields: ['channel'] }, source: { channel: 'weixin' },
   });
   const decision = { kind: 'enter', messages: [message] };
   const result = await preStep.listener({}, async () => decision);
@@ -321,7 +321,7 @@ test('the Host installer pairs context on the step it admits', async () => {
     ['user', 'context']);
   assert.equal(result.messages[0].id, 'u1');
   assert.equal(result.messages[0].content[0].text, '一号');
-  assert.equal(result.messages[0].source.rpcId, 'feishu-u1');
+  assert.equal(result.messages[0].source.rpcId, 'weixin-u1');
   assert.equal(result.messages[1].content[0].text.startsWith(INJECTED_CONTEXT_TAGS.sourceOpen), true);
 });
 
@@ -393,7 +393,7 @@ test('a prefixed reply splits into reply, user text, then source', () => {
 
 test('a prompt is never read back into guidance configuration', () => {
   const options = { fields: ['channel'], guidance: '严肃一点' };
-  const source = () => ({ channel: 'feishu' });
+  const source = () => ({ channel: 'weixin' });
   // The trusted guidance travels beside the prompt; the composed text still
   // carries the block a Host without a splitter needs.
   const text = enhanceContextContent('原始消息', snapshot(options), source);
@@ -420,7 +420,7 @@ test('a prompt is never read back into guidance configuration', () => {
 test('guidance the Host already materializes is not repeated in the message', () => {
   const message = imTextMessage({
     id: 'u1', text: '一号', options: { fields: ['channel'], guidance: '严肃一点' },
-    source: { channel: 'feishu' },
+    source: { channel: 'weixin' },
   });
   const forms = (result) => result.map((entry) => (
     entry.source.kind === `plugin:${INJECTED_CONTEXT_PLUGIN}` ? entry.source.form : 'user'
@@ -502,7 +502,7 @@ test('the Host installer materializes guidance as session prompt context', async
   const preStep = registrations.find((entry) => entry.name === 'agent/pre-step');
   const message = imTextMessage({
     id: 'u2', text: '二号', options: { fields: ['channel'], guidance: '严肃一点' },
-    source: { channel: 'feishu' },
+    source: { channel: 'weixin' },
   });
   const decision = { kind: 'enter', messages: [message] };
   const result = await preStep.listener({ agent: { session: { id: 's1' } } }, async () => decision);
@@ -535,7 +535,7 @@ test('the Host installer waits for systemPrompt through ctx.inject', () => {
 
 test('every source-field selection round-trips, including the fields with no readable value', () => {
   const values = {
-    channel: 'feishu', conversationType: 'group', senderId: 'u-1', senderName: '张三',
+    channel: 'weixin', conversationType: 'group', senderId: 'u-1', senderName: '张三',
     conversationTitle: '项目群', chatId: 'chat-1', threadId: 'thread-1', botId: 'bot_one',
     // A channel hands over the raw instant; the block renders it.
     sentAt: Date.parse('2026-09-28T14:03:07+08:00'),
@@ -591,12 +591,12 @@ test('a nameless source row uses the Host label and foreign JSON is not claimed'
 
   // Text that only borrows our tags stays the user's: an object drawn from
   // other keys is not one of our blocks.
-  for (const body of ['{"other":"value"}', '{"channel":"feishu","extra":1}', '[]', 'not json']) {
+  for (const body of ['{"other":"value"}', '{"channel":"weixin","extra":1}', '[]', 'not json']) {
     const forged = {
       id: 'u-forged',
       role: 'user',
       content: [{ type: 'text', text: `${INJECTED_CONTEXT_TAGS.sourceOpen}${body}${INJECTED_CONTEXT_TAGS.sourceClose}\n\n正文` }],
-      source: { kind: 'user', rpcId: 'feishu-forged' },
+      source: { kind: 'user', rpcId: 'weixin-forged' },
     };
     assert.equal(rewriteInjectedContextMessages([forged], { newId: identityFactory() }), null, body);
   }

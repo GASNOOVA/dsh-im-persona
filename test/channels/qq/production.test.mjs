@@ -45,7 +45,7 @@ test('QQ production has no per-bot result-file Gate', async (t) => {
     credentials: {},
     typertGateway: { invoke() {}, stream() {} },
     logger: () => ({ error() {}, warn() {}, info() {}, debug() {} }),
-  }, { dataDir }, {
+  }, { dataDir, dshHome: dataDir }, {
     ConfigStore,
     StateStore,
     HarnessClient: Harness,

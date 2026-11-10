@@ -1047,7 +1047,7 @@ async function runConversationWorkspaceCommand(command, harness, conversationKey
 
 /**
  * One failure mapping for every workspace-switch surface. The text command and
- * the Telegram picker card call the same switch, so their receipts must not
+ * the QQ picker card call the same switch, so their receipts must not
  * drift; returns null for errors this layer deliberately does not classify
  * (the caller decides whether to rethrow or degrade).
  */

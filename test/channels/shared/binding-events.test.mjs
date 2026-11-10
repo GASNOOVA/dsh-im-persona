@@ -9,13 +9,13 @@ import {
   createBindingAnnouncer,
 } from '../../../plugin-src/host/channels/shared/binding-events.mjs';
 
-const GROUP_KEY = 'group:-1004337494578:67';
-const DIRECT_KEY = 'direct:161161619';
+const GROUP_KEY = 'group:group-openid-1';
+const DIRECT_KEY = 'c2c:openid-1';
 
 function recorder({ authors = null } = {}) {
   const events = [];
   const announcer = createBindingAnnouncer({
-    channel: 'telegram',
+    channel: 'qq',
     emit: (event, payload) => events.push({ event, payload }),
     authorsOf: () => authors,
   });
@@ -57,10 +57,10 @@ test('a first bind announces only the bind, never an unbind', async () => {
   assert.deepEqual(events.map((entry) => entry.event), ['dsh-im/session-pre-bind']);
   assert.equal(events[0].payload.sessionId, 'session-a');
   assert.equal(events[0].payload.conversationKey, GROUP_KEY);
-  assert.equal(events[0].payload.chatType, 'thread');
-  assert.equal(events[0].payload.chatId, '-1004337494578');
-  assert.equal(events[0].payload.threadId, '67');
-  assert.equal(events[0].payload.channel, 'telegram');
+  assert.equal(events[0].payload.chatType, 'group');
+  assert.equal(events[0].payload.chatId, 'group-openid-1');
+  assert.equal(events[0].payload.threadId, null);
+  assert.equal(events[0].payload.channel, 'qq');
   assert.equal(events[0].payload.botId, 'bot_1');
 });
 
@@ -76,7 +76,6 @@ test('switching a conversation unbinds the previous session before binding the n
   ]);
   assert.equal(events[0].payload.sessionId, 'session-a');
   assert.equal(events[0].payload.conversationKey, GROUP_KEY);
-  assert.equal(events[0].payload.threadId, '67');
   assert.equal(events[1].payload.sessionId, 'session-b');
 });
 
@@ -110,7 +109,7 @@ test('clearing one binding unbinds the session it held', async () => {
   assert.deepEqual(events.map((entry) => entry.event), ['dsh-im/session-unbind']);
   assert.equal(events[0].payload.sessionId, 'session-a');
   assert.equal(events[0].payload.conversationKey, GROUP_KEY);
-  assert.equal(events[0].payload.chatType, 'thread');
+  assert.equal(events[0].payload.chatType, 'group');
 });
 
 test('clearing every binding unbinds each conversation it held', async () => {
@@ -139,7 +138,7 @@ test('the remembered author wins over the key for the sender', async () => {
 
 test('a throwing subscriber does not break the write', async () => {
   const announcer = createBindingAnnouncer({
-    channel: 'telegram',
+    channel: 'qq',
     emit: () => {
       throw new Error('subscriber exploded');
     },
@@ -245,7 +244,7 @@ test('a bind through the announced store reaches the subscriber', async () => {
   ]);
   assert.equal(events[0].payload.botId, 'bot_1');
   assert.equal(events[0].payload.sessionId, 'session-a');
-  assert.equal(events[0].payload.chatType, 'thread');
+  assert.equal(events[0].payload.chatType, 'group');
   assert.equal(state.writes.length, 1);
 });
 
@@ -355,35 +354,6 @@ test('forget drops the memo, including a load that finishes afterwards', async (
  */
 const ANNOUNCING_CHANNELS = [
   {
-    name: 'dingtalk',
-    storeModule: '../../../src/channels/dingtalk/state-store.mjs',
-    storeExport: 'DingtalkStateStore',
-    bot: { botId: 'dt_1', clientId: 'dingclient' },
-    conversationKey: 'p2p:staff-1',
-    internals: { DeviceAuth: class { constructor() {} } },
-  },
-  {
-    name: 'feishu',
-    storeModule: '../../../src/channels/feishu/state-store.mjs',
-    storeExport: 'StateStore',
-    bot: { id: 'fs_1', secretRef: 'DSH_FEISHU_APP_SECRET_FS1' },
-    botId: 'fs_1',
-    conversationKey: 'p2p:ou_1',
-    internals: { lark: { defaultHttpInstance: {} }, verifyFeishuApp: async () => ({}) },
-  },
-  {
-    name: 'matrix',
-    storeModule: '../../../src/channels/shared/conversation-state-store.mjs',
-    storeExport: 'ConversationStateStore',
-    bot: { botId: 'mx_1' },
-    conversationKey: 'group:room:!room:example.org',
-    internals: {
-      SidecarStore: class { async load() { return {}; } },
-      CryptoStore: class { async load() { return {}; } },
-      RoomHistoryStore: class { async load() { return {}; } },
-    },
-  },
-  {
     name: 'qq',
     storeModule: '../../../src/channels/qq/state-store.mjs',
     storeExport: 'QqStateStore',
@@ -392,51 +362,12 @@ const ANNOUNCING_CHANNELS = [
     internals: { QrAuth: class { constructor() {} } },
   },
   {
-    name: 'slack',
-    storeModule: '../../../src/channels/slack/state-store.mjs',
-    storeExport: 'SlackStateStore',
-    bot: { botId: 'sl_1' },
-    conversationKey: 'group:C0123ABC',
-  },
-  {
-    name: 'wecom',
-    storeModule: '../../../src/channels/wecom/state-store.mjs',
-    storeExport: 'WecomStateStore',
-    bot: { botId: 'wc_1' },
-    conversationKey: 'p2p:zhangsan',
-    internals: { QrAuth: class { constructor() {} } },
-  },
-  {
-    name: 'wecom-app',
-    storeModule: '../../../src/channels/wecom-app/state-store.mjs',
-    storeExport: 'WecomAppStateStore',
-    bot: { botId: 'wca_1' },
-    conversationKey: 'p2p:zhangsan',
-    internals: {
-      callbackServer: {
-        listening: false,
-        registerRoute() {},
-        unregisterRoute() {},
-        routeCount() { return 0; },
-        routePath() { return '/callback'; },
-      },
-    },
-  },
-  {
     name: 'weixin',
     storeModule: '../../../src/channels/weixin/state-store.mjs',
     storeExport: 'WeixinStateStore',
     bot: { botId: 'wx_1' },
     conversationKey: 'p2p:o9cq@im.wechat',
     internals: { api: { beginLogin() {}, pollLogin() {} } },
-  },
-  {
-    name: 'whatsapp',
-    storeModule: '../../../src/channels/whatsapp/state-store.mjs',
-    storeExport: 'WhatsappStateStore',
-    bot: { botId: 'wa_1' },
-    conversationKey: 'direct:16505550123@s.whatsapp.net',
-    internals: { createSession: async () => ({}) },
   },
 ];
 
@@ -479,7 +410,7 @@ for (const channel of ANNOUNCING_CHANNELS) {
       logger: () => ({ error() {}, warn() {}, info() {}, debug() {} }),
       emit: (event, payload) => events.push({ event, payload }),
     };
-    const production = await createProductionController(ctx, { dataDir }, {
+    const production = await createProductionController(ctx, { dataDir, dshHome: dataDir }, {
       ConfigStore,
       StateStore,
       HarnessClient: Harness,

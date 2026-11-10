@@ -48,12 +48,13 @@ test('isControlCommand reserves valid and malformed control command forms', () =
 
 test('/version returns the package version without touching Harness or Session state', async () => {
   const { calls, harness, state } = fixture();
-  const { version } = await import('../package.json', { with: { type: 'json' } })
+  const { name, version } = await import('../package.json', { with: { type: 'json' } })
     .then((module) => module.default);
 
+  // `/version` 打印插件品牌名与版本；品牌名由 package.json 提供，测试不写死。
   assert.deepEqual(
     await runControlCommand('/VERSION', harness, state, 'direct:one'),
-    { message: `dsh-im v${version}` },
+    { message: `${name} v${version}` },
   );
   assert.match(
     (await runControlCommand('/version details', harness, state, 'direct:one')).message,

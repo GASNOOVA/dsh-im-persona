@@ -8,7 +8,7 @@ import { initialAccessPolicyFor } from '../../../plugin-src/host/channels/shared
 import { createAccessPolicy, createAccessPolicyScope } from '../../../src/channels/shared/access-policy.mjs';
 import { evaluateInboundAccess } from '../../../src/channels/shared/inbound-access.mjs';
 
-for (const channel of ['feishu', 'qq']) {
+for (const channel of ['qq']) {
   test(`${channel} opens new bot messages and commands while preserving saved policies and legacy migration`, async (t) => {
     const dataDir = await mkdtemp(join(tmpdir(), `dsh-new-access-${channel}-`));
     t.after(() => rm(dataDir, { recursive: true, force: true }));

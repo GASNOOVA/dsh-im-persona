@@ -2046,7 +2046,7 @@ export class HarnessClient {
         progressTail = progressTail
           .then(() => onUpdate(update))
           .catch((error) => {
-            // The WeCom SDK rejects with the raw ack frame (no .message), so
+            // A channel SDK may reject with a raw frame (no .message), so
             // surface errcode/errmsg explicitly instead of printing undefined.
             const detail = error instanceof Error
               ? error.message

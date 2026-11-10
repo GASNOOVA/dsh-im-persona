@@ -5,10 +5,7 @@ import { harnessConnection } from '../plugin-src/host/harness-connection.mjs';
 import { inject as hostInject } from '../plugin-src/host/index.mjs';
 import { toPosixPath } from './support/filesystem.mjs';
 
-const IM_CHANNELS = [
-  'weixin', 'feishu', 'dingtalk', 'wecom', 'qq',
-  'slack', 'telegram', 'discord', 'whatsapp', 'matrix', 'wecom-app', 'imessage', 'email',
-];
+const IM_CHANNELS = ['weixin', 'qq'];
 
 function modernContext(extra = {}) {
   return Object.defineProperties({ typertGateway: { invoke() {}, stream() {} }, on() {} }, Object.getOwnPropertyDescriptors(extra));
@@ -109,10 +106,6 @@ async function assembledHarness(channel, ctx, config = {}, inspect) {
     }),
   });
   try {
-    if (channel === 'office') {
-      constructed.controller.createRuntime({});
-      constructed.runtime.createHarness({ workspace: '/test/workspace' });
-    }
     await inspect?.(production, constructed);
     return constructed.harness;
   } finally {
@@ -120,13 +113,13 @@ async function assembledHarness(channel, ctx, config = {}, inspect) {
   }
 }
 
-for (const channel of [...IM_CHANNELS, 'office']) {
+for (const channel of IM_CHANNELS) {
   test(`${channel} production uses the modern Host gateway with no webServer or listening port`, async () => {
     const root = {};
     const ctx = modernContext({ credentials: {}, root });
     const options = await assembledHarness(channel, ctx);
     assert.equal(options.apiProxy, harnessConnection(ctx).apiProxy);
-    assert.equal(options.competitiveApprovals, !['imessage', 'email', 'office'].includes(channel));
+    assert.equal(options.competitiveApprovals, true);
     assert.equal(options.interactionScope, root);
     assert.equal(Object.hasOwn(options, 'baseUrl'), false);
     assert.match(toPosixPath(options.workspace), /\/test\/workspace$/);

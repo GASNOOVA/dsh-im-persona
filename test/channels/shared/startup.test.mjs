@@ -12,19 +12,12 @@ import { publicChannelInitializing, publicChannelStartupError } from '../../../p
 import { getImHostLanguage, setImHostLanguage } from '../../../src/channels/shared/i18n.mjs';
 
 const channels = await Promise.all([
-  ['feishu', 'PluginConfigStore', 'plugin-config-store'],
-  ['weixin', 'WeixinConfigStore'], ['dingtalk', 'DingtalkConfigStore'],
-  ['wecom', 'WecomConfigStore'], ['wecom-app', 'WecomAppConfigStore'],
-  ['qq', 'QqConfigStore'], ['slack', 'SlackConfigStore'],
-  ['telegram', 'TelegramConfigStore'], ['discord', 'DiscordConfigStore'],
-  ['whatsapp', 'WhatsappConfigStore'],
-  ['matrix', 'MatrixConfigStore', 'matrix-config-store'],
-  ['email', 'EmailConfigStore'], ['office', 'OfficeConfigStore'],
-].map(async ([id, storeName, storeFile = 'config-store']) => ({
+  ['weixin', 'WeixinConfigStore'], ['qq', 'QqConfigStore'],
+].map(async ([id, storeName]) => ({
   id,
-  key: id === 'wecom-app' ? 'wecomApp' : id,
+  key: id,
   apply: (await import(`../../../plugin-src/host/channels/${id}/index.mjs`)).apply,
-  Store: (await import(`../../../src/channels/${id}/${storeFile}.mjs`))[storeName],
+  Store: (await import(`../../../src/channels/${id}/config-store.mjs`))[storeName],
   api: await import(`../../../plugin-src/client/channels/${id}/api.js`),
 })));
 
@@ -188,7 +181,7 @@ for (const { id, apply, Store, api } of channels) {
   });
 }
 
-test('the composed host serves other real channels while Feishu is loading and after it fails', async t => {
+test('the composed host serves other real channels while one channel is loading and after it fails', async t => {
   const f = await fixture(t);
   const gate = Promise.withResolvers();
   const loaded = new Set();
@@ -196,7 +189,7 @@ test('the composed host serves other real channels while Feishu is loading and a
   const config = Object.fromEntries(channels.map(({ id, key, Store }) => {
     class ConfigStore extends Store {
       async load() {
-        if (id === 'feishu') {
+        if (id === 'weixin') {
           await gate.promise;
           throw new SyntaxError('private-secret');
         }
@@ -209,27 +202,27 @@ test('the composed host serves other real channels while Feishu is loading and a
     return [key, f.config(id, { internals: { ConfigStore } })];
   }));
   const internals = Object.fromEntries([
-    'installUpdateRpc', 'installInboundTtlRpc', 'installDeliverySyncRpc', 'installDeliveryRpc', 'installDeliveryHttp',
+    'installInboundTtlRpc', 'installDeliverySyncRpc', 'installDeliveryRpc', 'installDeliveryHttp',
     'installSessionSyncCoordinator', 'installHostLanguage', 'installHostLanguageRpc',
   ].map(name => [name, () => {}]));
   const fiber = f.start(createImHostPlugin(internals).apply, config);
   try {
-    // Allow Cordis to enter its activation callback; Feishu stays gated.
+    // Allow Cordis to enter its activation callback; Weixin stays gated.
     await new Promise(setImmediate);
-    assert.equal(f.routes.size, channels.length + 2);
+    assert.equal(f.routes.size, channels.length + 3);
     assert.equal(f.routes.has('/dsh-im-sidebar'), true);
     await allLoaded.promise;
-    assert.equal((await f.call('feishu')).error.code, 'feishu-initializing');
+    assert.equal((await f.call('weixin')).error.code, 'weixin-initializing');
     // Let the other channels finish their local workspace reconciliation.
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      if ((await f.call('telegram')).ok) break;
+      if ((await f.call('qq')).ok) break;
       await new Promise(resolve => setTimeout(resolve, 5));
     }
-    assert.equal((await f.call('telegram')).ok, true);
+    assert.equal((await f.call('qq')).ok, true);
     gate.resolve();
     await fiber.await();
-    assert.equal((await f.call('feishu')).error.code, 'feishu-startup-config-invalid');
-    for (const { id } of channels.filter(c => c.id !== 'feishu')) assert.equal((await f.call(id)).ok, true, id);
+    assert.equal((await f.call('weixin')).error.code, 'weixin-startup-config-invalid');
+    for (const { id } of channels.filter(c => c.id !== 'weixin')) assert.equal((await f.call(id)).ok, true, id);
     await fiber.dispose();
     assert.equal(f.routes.size, 0);
   } finally {
@@ -242,15 +235,15 @@ test('startup rolls back prepared resources even when delivery cleanup fails', a
   let closed = 0;
   let unregistered = 0;
   const fiber = f.start((ctx, config) => installProductionChannel(ctx, config, {
-    channel: 'telegram', rpcChannel: '/telegram',
+    channel: 'qq', rpcChannel: '/qq',
     createProduction: async () => ({ controller: {}, deliveryAdapter: {}, async close() { closed += 1; } }),
     createHandler() { throw new Error('private-handler-error'); },
   }), {
     deliveryService: { registerAdapter() { return () => { unregistered += 1; throw new Error('private-cleanup-error'); }; } },
   });
   await fiber.await();
-  const result = await f.call('telegram');
-  assert.equal(result.error.code, 'telegram-startup-failed');
+  const result = await f.call('qq');
+  assert.equal(result.error.code, 'qq-startup-failed');
   assert.doesNotMatch(JSON.stringify(result), /private/);
   assert.equal(closed, 1);
   assert.equal(unregistered, 1);
@@ -263,14 +256,14 @@ test('startup rolls back prepared resources even when delivery cleanup fails', a
 test('an uncaught endpoint failure keeps a final Host diagnostic instead of becoming a management transport failure', async t => {
   const f = await fixture(t);
   const fiber = f.start((ctx, config) => installProductionChannel(ctx, config, {
-    channel: 'telegram', rpcChannel: '/telegram',
+    channel: 'qq', rpcChannel: '/qq',
     createProduction: async () => ({ controller: {}, async close() {} }),
     createHandler: () => async () => { throw new Error('private-endpoint-error', { cause: Object.assign(new Error('private-host'), { code: 'ENOTFOUND' }) }); },
   }), {});
   await fiber.await();
-  const result = await f.call('telegram', 'bot.reconnect');
+  const result = await f.call('qq', 'bot.reconnect');
   assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'telegram-operation-failed');
+  assert.equal(result.error.code, 'qq-operation-failed');
   assert.equal(result.error.details.reason, 'ENOTFOUND');
   assert.equal(result.error.details.stage, 'connection.start');
   assert.match(result.error.details.referenceId, /^IM-CONN-[A-F0-9]{8}$/);
@@ -285,7 +278,7 @@ test('a host language change refreshes every started channel menu and releases o
   const refreshes = [];
   let failNext = false;
   const fiber = f.start((ctx, config) => installProductionChannel(ctx, config, {
-    channel: 'telegram', rpcChannel: '/telegram',
+    channel: 'qq', rpcChannel: '/qq',
     createProduction: async () => ({
       controller: {
         async refreshCommandMenus() {
@@ -328,14 +321,14 @@ test('a channel without a platform-side command menu ignores language changes', 
   setImHostLanguage('zh');
   const f = await fixture(t);
   const fiber = f.start((ctx, config) => installProductionChannel(ctx, config, {
-    channel: 'office', rpcChannel: '/office',
+    channel: 'weixin', rpcChannel: '/weixin',
     createProduction: async () => ({ controller: {}, async close() {} }),
     createHandler: () => async () => ({ ok: true, value: {} }),
   }), {});
   await fiber.await();
   setImHostLanguage('en');
   await new Promise(setImmediate);
-  assert.equal((await f.call('office')).ok, true);
+  assert.equal((await f.call('weixin')).ok, true);
   await fiber.dispose();
 });
 
@@ -344,13 +337,13 @@ test('disposing a channel during initialization closes the late controller and r
   const gate = Promise.withResolvers();
   let closed = 0;
   const fiber = f.start((ctx, config) => installProductionChannel(ctx, config, {
-    channel: 'telegram', rpcChannel: '/telegram',
+    channel: 'qq', rpcChannel: '/qq',
     createProduction: () => gate.promise,
     createHandler: () => async () => ({ ok: true, value: {} }),
   }), {});
   try {
     await new Promise(setImmediate);
-    assert.equal((await f.call('telegram')).error.code, 'telegram-initializing');
+    assert.equal((await f.call('qq')).error.code, 'qq-initializing');
     const disposing = fiber.dispose();
     gate.resolve({ controller: {}, async close() { closed += 1; } });
     await disposing;

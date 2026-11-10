@@ -52,6 +52,7 @@ import {
   enhanceContextContent,
   withSentAt,
 } from '../shared/context-enhancement.mjs';
+import { capturePersona, injectPersonaContent } from '../shared/persona.mjs';
 import {
   hasInboundImages,
   imagePromptDiagnostic,
@@ -320,6 +321,7 @@ export class WeixinHarnessBridge {
   #state;
   #deferred;
   #contextEnhancement;
+  #persona;
   #accessPolicy;
   #status;
   #logger;
@@ -354,6 +356,7 @@ export class WeixinHarnessBridge {
     harness,
     state,
     contextEnhancement,
+    persona,
     accessPolicy,
     status = createWeixinBridgeStatus(),
     logger = console,
@@ -375,6 +378,7 @@ export class WeixinHarnessBridge {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#persona = persona;
     this.#accessPolicy = accessPolicy;
     this.#status = status;
     this.#logger = logger;
@@ -772,6 +776,9 @@ export class WeixinHarnessBridge {
           () => message?.create_time_ms ?? weixinMessageTimestampMs(messageId),
         ),
       ),
+      // Only /steer of the control commands renders a user instruction, so only
+      // it consumes this snapshot (see control-command.mjs).
+      persona: capturePersona(this.#persona),
     });
     if (result?.stopped) {
       await Promise.allSettled([
@@ -932,6 +939,15 @@ export class WeixinHarnessBridge {
           // here would drop `sentAt` and silently render no block at all.
           content = enhanceContextContent(originalContent, captured);
           contextEnhanced = content !== originalContent;
+        }
+        // Persona wraps everything else: the Host splits the block into its own
+        // instructions row, and the block stays inline for a Harness that never
+        // dispatches agent/pre-step. `contextEnhanced` also makes the session
+        // title path strip the block when a media-only prompt has no text.
+        const persona = capturePersona(this.#persona);
+        if (persona) {
+          content = injectPersonaContent(content ?? text, persona);
+          contextEnhanced = true;
         }
         await this.#state.markSeen(messageId);
         promptRecorded = true;

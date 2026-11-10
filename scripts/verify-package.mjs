@@ -21,46 +21,20 @@ async function readSourceTree(directory) {
 const required = [
   'lib/index.js',
   'lib/client.js',
-  'bin/dsh-im.mjs',
+  'bin/dsh-im-persona.mjs',
   'cordis.patch.yml',
   'scripts/verify-injected-context.mjs',
   'README.md',
-  'README.en.md',
   'PROACTIVE_DELIVERY.md',
-  'PROACTIVE_DELIVERY.en.md',
   'THIRD_PARTY_NOTICES.md',
-  'plugin-src/client/channels/dingtalk/index.js',
-  'plugin-src/client/channels/slack/index.js',
+  'plugin-src/client/channels/qq/index.js',
+  'plugin-src/client/channels/weixin/index.js',
   'plugin-src/client/i18n.js',
-  'plugin-src/client/update-panel.js',
   'plugin-src/client/context-enhancement.js',
-  'plugin-src/host/update-service.mjs',
-  'plugin-src/host/update-runtime.mjs',
-  'plugin-src/host/update-rpc.mjs',
-  'plugin-src/host/channels/feishu/index.mjs',
-  'plugin-src/host/channels/weixin/index.mjs',
-  'plugin-src/host/channels/dingtalk/index.mjs',
   'plugin-src/host/channels/qq/index.mjs',
-  'plugin-src/host/channels/slack/index.mjs',
-  'plugin-src/host/channels/wecom/index.mjs',
-  'plugin-src/host/channels/telegram/index.mjs',
-  'plugin-src/host/channels/discord/index.mjs',
-  'plugin-src/host/channels/whatsapp/index.mjs',
-  'plugin-src/host/channels/matrix/index.mjs',
-  'plugin-src/client/channels/matrix/index.js',
-  'src/channels/feishu/feishu-runtime.mjs',
-  'src/channels/weixin/weixin-runtime.mjs',
-  'src/channels/dingtalk/dingtalk-runtime.mjs',
+  'plugin-src/host/channels/weixin/index.mjs',
   'src/channels/qq/qq-runtime.mjs',
-  'src/channels/slack/slack-runtime.mjs',
-  'src/channels/wecom/wecom-runtime.mjs',
-  'src/channels/telegram/telegram-runtime.mjs',
-  'src/channels/telegram/telegram-http.mjs',
-  'src/channels/discord/discord-runtime.mjs',
-  'src/channels/whatsapp/whatsapp-runtime.mjs',
-  'src/channels/whatsapp/whatsapp-web-session.mjs',
-  'src/channels/matrix/matrix-runtime.mjs',
-  'src/channels/matrix/matrix-api.mjs',
+  'src/channels/weixin/weixin-runtime.mjs',
   'src/channels/shared/context-enhancement.mjs',
 ];
 await Promise.all(required.map((path) => access(resolve(root, path))));
@@ -84,7 +58,7 @@ const [
   readFile(resolve(root, 'plugin-src/host/index.mjs'), 'utf8'),
   readFile(resolve(root, 'plugin-src/client/index.js'), 'utf8'),
   readSourceTree(resolve(root, 'plugin-src/client')),
-  stat(resolve(root, 'bin/dsh-im.mjs')),
+  stat(resolve(root, 'bin/dsh-im-persona.mjs')),
 ]);
 const manifest = JSON.parse(manifestText);
 const lock = JSON.parse(lockText);
@@ -123,20 +97,20 @@ if (forbiddenDshLockPaths.length > 0) {
   );
 }
 
-if (!/\bid\s*:\s*["']@xmanrui\/dsh-im["']/u.test(client)) {
-  throw new Error('client bundle does not register the dsh-im loader id');
+if (!/\bid\s*:\s*["']dsh-im-persona["']/u.test(client)) {
+  throw new Error('client bundle does not register the dsh-im-persona loader id');
 }
 const sourceSectionMarkers = [
   /ctx\.slots\.inject\(\s*["']settings\.section["']/u,
   /name\s*:\s*["']settings\.section["']/u,
-  /id\s*:\s*["']xmanrui-dsh-im["']/u,
+  /id\s*:\s*["']dsh-im-persona["']/u,
   /order\s*:\s*21\b/u,
   /label\s*:\s*\(\)\s*=>\s*t\(\s*["']IM机器人["']\s*\)/u,
   /locale\s*:\s*IM_LOCALE_NAMESPACE\b/u,
 ];
-const bundleSectionPattern = /name\s*:\s*["']settings\.section["']\s*,\s*id\s*:\s*["']xmanrui-dsh-im["']\s*,\s*order\s*:\s*21\s*,\s*label\s*:\s*\(\)\s*=>\s*[$A-Z_a-z][$\w]*\(\s*["']IM(?:机器人|\\u673A\\u5668\\u4EBA)["']\s*\)\s*,\s*locale\s*:\s*(?:[$A-Z_a-z][$\w]*|["']dsh-im["'])/u;
+const bundleSectionPattern = /name\s*:\s*["']settings\.section["']\s*,\s*id\s*:\s*["']dsh-im-persona["']\s*,\s*order\s*:\s*21\s*,\s*label\s*:\s*\(\)\s*=>\s*[$A-Z_a-z][$\w]*\(\s*["']IM(?:机器人|\\u673A\\u5668\\u4EBA)["']\s*\)\s*,\s*locale\s*:\s*(?:[$A-Z_a-z][$\w]*|["']dsh-im-persona["'])/u;
 if (sourceSectionMarkers.some((pattern) => !pattern.test(clientEntrySource))
-  || !/IM_LOCALE_NAMESPACE\s*=\s*["']dsh-im["']/u.test(clientSources)
+  || !/IM_LOCALE_NAMESPACE\s*=\s*["']dsh-im-persona["']/u.test(clientSources)
   || !bundleSectionPattern.test(client)) {
   throw new Error('client bundle does not register the localized top-level IM settings section');
 }
@@ -148,102 +122,89 @@ if (client.includes('settings.plugins.tab') || clientSources.includes('settings.
 }
 // Connections still have no channel-enable toggle. Checkable inputs are owned
 // only by the shared context editor, the saved-target Session sync row, the
-// email settings, the Telegram thinking-traces block, Feishu panel settings,
-// the conversation-directory settings form, and the general Delivery tab.
-// The context editor contains one switch template and one mapped field-input
-// template; the delivery target adds one ordinary checkbox template; the
-// Telegram thinking-traces block adds two ordinary checkbox templates (traces
-// and frame numbering). General settings adds one mapped switch template for
-// the two Feishu panel preferences. Conversation-directory settings adds one
-// switch template reused for the bot override and channel default. The Delivery
-// tab adds one ordinary checkbox template mapped over its two switches (mirror
-// Web input, deliver model answers).
+// conversation-directory settings form, and the general Delivery tab.
 const contextEditorSource = await readFile(resolve(root, 'plugin-src/client/context-enhancement.js'), 'utf8');
 const deliverySettingsSource = await readFile(resolve(root, 'plugin-src/client/delivery-settings.js'), 'utf8');
-const emailSettingsSource = await readFile(resolve(root, 'plugin-src/client/channels/email/index.js'), 'utf8');
-const thinkingTracesSource = await readFile(resolve(root, 'plugin-src/client/channels/telegram/thinking-traces.js'), 'utf8');
 const botGeneralSettingsSource = await readFile(resolve(root, 'plugin-src/client/bot-general-settings.js'), 'utf8');
-const conversationDirectorySettingsSource = await readFile(resolve(root, 'plugin-src/client/channels/feishu/conversation-directory-settings.js'), 'utf8');
 const deliverySyncSettingsSource = await readFile(
   resolve(root, 'plugin-src/client/delivery-sync-settings.js'),
   'utf8',
 );
+const personaSettingsSource = await readFile(resolve(root, 'plugin-src/client/persona-settings.js'), 'utf8');
 const otherClientSources = clientSources
   .replace(contextEditorSource, '')
   .replace(deliverySettingsSource, '')
-  .replace(emailSettingsSource, '')
-  .replace(thinkingTracesSource, '')
   .replace(botGeneralSettingsSource, '')
-  .replace(conversationDirectorySettingsSource, '')
-  .replace(deliverySyncSettingsSource, '');
+  .replace(deliverySyncSettingsSource, '')
+  .replace(personaSettingsSource, '');
 if (/role:\s*["']switch|type:\s*["']checkbox/.test(otherClientSources)
   || (deliverySettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
   || /role:\s*["']switch["']/u.test(deliverySettingsSource)
-  || (thinkingTracesSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 2
-  || /role:\s*["']switch["']/u.test(thinkingTracesSource)
-  || (botGeneralSettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
-  || (botGeneralSettingsSource.match(/role:\s*["']switch["']/g) ?? []).length !== 1
-  || (conversationDirectorySettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
-  || (conversationDirectorySettingsSource.match(/role:\s*["']switch["']/g) ?? []).length !== 1
   || (deliverySyncSettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
   || /role:\s*["']switch["']/u.test(deliverySyncSettingsSource)
-  || (client.match(/role:\s*["']switch["']/g) ?? []).length !== 3
-  || (client.match(/type:\s*["']checkbox["']/g) ?? []).length !== 8) {
-  throw new Error('checkable inputs must be limited to context enhancement, Session sync, email settings, Telegram thinking traces, Feishu panel settings, conversation-directory settings, and the Delivery tab');
+  || /role:\s*["']switch|type:\s*["']checkbox/u.test(personaSettingsSource)
+  || !personaSettingsSource.includes('<dsh_im_persona>')
+  || (client.match(/role:\s*["']switch["']/g) ?? []).length !== 1
+  || (client.match(/type:\s*["']checkbox["']/g) ?? []).length !== 4) {
+  throw new Error('checkable inputs must be limited to context enhancement, Session sync, and the Delivery tab');
 }
-for (const marker of ['bot.conversation-directory.set', 'bot.conversation-directory.default.set']) {
+for (const marker of ['bot.persona.get', 'bot.persona.set']) {
   if (!host.includes(marker) || !client.includes(marker)) {
-    throw new Error(`conversation-directory RPC endpoint missing from Host or Client bundle: ${marker}`);
+    throw new Error(`persona RPC endpoint missing from Host or Client bundle: ${marker}`);
   }
+}
+if (!host.includes('<dsh_im_persona>') || !client.includes('<dsh_im_persona>')) {
+  throw new Error('persona injection marker missing from Host or Client bundle');
 }
 for (const marker of ['bot.context-enhancement.set', '<dsh_im_source>', '<dsh_im_source_guidance>']) {
   if (!host.includes(marker) || !client.includes(marker)) {
     throw new Error(`context-enhancement marker missing from Host or Client bundle: ${marker}`);
   }
 }
+if (!client.includes('DSH-IM Persona') || /id\s*:\s*["']@xmanrui\/dsh-im["']/u.test(client)) {
+  throw new Error('client bundle still carries upstream branding or loader id');
+}
 if (!client.includes('container-type: inline-size')
   || !client.includes('@container (max-width: 680px)')) {
-  throw new Error('client bundle does not contain the narrow-panel DingTalk QR layout');
+  throw new Error('client bundle does not contain the narrow-panel bot QR layout');
 }
-for (const marker of ['/feishu', '/weixin', '/dingtalk', '/wecom', '/qq', '/slack', '/telegram', '/discord', '/whatsapp', '/matrix']) {
+for (const marker of ['/weixin', '/qq']) {
   if (!host.includes(marker)) {
     throw new Error(`host bundle does not contain the internal ${marker} RPC provider`);
   }
-}
-for (const marker of ['update.status', 'update.check', 'update.install']) {
-  if (!host.includes(marker) || !client.includes(marker)) {
-    throw new Error(`update RPC endpoint missing from Host or Client bundle: ${marker}`);
-  }
-}
-if (!host.includes('https://registry.npmjs.org/') || !host.includes('desktopPnpm')) {
-  throw new Error('host bundle is missing the npm updater or Desktop package-management adapter');
 }
 for (const marker of ['/session Session ID', 'bindWorkspaceSession', 'session-subagent-unsupported']) {
   if (!host.includes(marker)) {
     throw new Error(`host bundle does not contain the Session binding marker: ${marker}`);
   }
 }
-if (/@xmanrui\/dsh-(?:feishu|weixin|dingtalk)/.test(host)) {
-  throw new Error('host bundle still imports an external channel plugin');
+// The personal edition keeps every channel inside this package and never
+// depends on the upstream dsh-im package or its sibling plugins.
+// Attribution text in the description is allowed; import specifiers are not.
+const SIBLING_PLUGIN = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["']@xmanrui\/dsh-[^"']*["']/u;
+if (SIBLING_PLUGIN.test(host)) {
+  throw new Error('host bundle still imports a sibling channel plugin');
 }
-if (/@xmanrui\/dsh-(?:feishu|weixin|dingtalk)/.test(
-  manifestText + lockText + hostSource + clientSources,
-)) {
-  throw new Error('source or package metadata still depends on an external channel plugin');
+if (SIBLING_PLUGIN.test(hostSource + clientSources)) {
+  throw new Error('source still imports a sibling channel plugin');
 }
-if (!patch.includes("name: '@xmanrui/dsh-im'") || /dsh-(?:feishu|weixin|dingtalk)/.test(patch)) {
-  throw new Error('bundle patch must activate only dsh-im');
-}
-for (const name of ['@xmanrui/dsh-feishu', '@xmanrui/dsh-weixin', '@xmanrui/dsh-dingtalk']) {
-  if (manifest.dependencies?.[name]) {
-    throw new Error(`${name} must not remain an external dependency`);
+for (const section of dependencySections) {
+  for (const name of Object.keys(manifest[section] ?? {})) {
+    if (/^@xmanrui\/dsh-/.test(name)) {
+      throw new Error(`${name} must not be declared in ${section} of the personal edition`);
+    }
   }
 }
+if (Object.keys(lock.packages ?? {}).some((path) => /node_modules\/@xmanrui\/dsh-/.test(path))) {
+  throw new Error('package lock still installs an upstream @xmanrui/dsh-* package');
+}
+if (!patch.includes('name: dsh-im-persona')) {
+  throw new Error('bundle patch must activate only dsh-im-persona');
+}
+// Personal edition: only the Weixin and QQ channel runtimes stay installed.
 const directDependencies = {
-  'dingtalk-stream': '2.1.4',
   '@tencent-connect/qqbot-connector': '1.2.0',
   '@tencent-connect/qqbot-nodejs': '1.0.4',
-  '@wecom/aibot-node-sdk': '1.0.7',
   qrcode: '1.5.4',
   undici: '7.30.1',
 };
@@ -252,27 +213,18 @@ for (const [name, version] of Object.entries(directDependencies)) {
     throw new Error(`${name} must be a pinned direct dependency at ${version}`);
   }
 }
-const bundledBuildDependencies = {
-  '@larksuiteoapi/node-sdk': '1.73.0',
-  '@whiskeysockets/baileys': '7.0.0-rc14',
-  'https-proxy-agent': '5.0.1',
-};
-for (const [name, version] of Object.entries(bundledBuildDependencies)) {
-  if (manifest.dependencies?.[name] !== undefined) {
-    throw new Error(`${name} must not remain a runtime dependency`);
-  }
-  if (manifest.devDependencies?.[name] !== version) {
-    throw new Error(`${name} must be a pinned build dependency at ${version}`);
+{
+  // Whitelist, so a dependency left behind by a removed channel fails here
+  // instead of shipping an unused SDK.
+  const allowedRuntime = new Set(Object.keys(directDependencies).concat([]));
+  for (const name of Object.keys(manifest.dependencies ?? {})) {
+    if (!allowedRuntime.has(name)) {
+      throw new Error(`${name} is not an allowed runtime dependency of the personal edition`);
+    }
   }
 }
-if (lock.packages?.['node_modules/protobufjs']?.dev !== true) {
-  throw new Error('protobufjs must remain build-only in the package lock');
-}
-if (manifest.bin?.['dsh-im'] !== 'bin/dsh-im.mjs') {
-  throw new Error('package manifest must publish the dsh-im executable');
-}
-if (/(?:from\s*|import\s*\(|require\s*\()\s*["'](?:@larksuiteoapi\/node-sdk|@whiskeysockets\/baileys|https-proxy-agent|protobufjs)(?:\/[^"']*)?["']/.test(host)) {
-  throw new Error('host bundle must not import a bundled SDK, proxy agent, or protobufjs at runtime');
+if (manifest.bin?.['dsh-im-persona'] !== 'bin/dsh-im-persona.mjs') {
+  throw new Error('package manifest must publish the dsh-im-persona executable');
 }
 if (!/(?:from\s*|import\s*\()\s*["']undici["']/.test(host)) {
   throw new Error('host bundle must retain undici as an external runtime dependency');
@@ -296,4 +248,4 @@ if (typeof deliveryApi?.createTarget !== 'function') {
   throw new Error('host bundle must expose dshIm.createTarget; rebuild before publishing');
 }
 
-console.log('Verified dsh-im package artifacts.');
+console.log('Verified dsh-im-persona package artifacts.');

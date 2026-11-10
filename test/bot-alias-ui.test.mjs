@@ -11,11 +11,7 @@ const button = (root, label) => root.findAllByType('button').find(node => text(n
 async function flush() { for (let i = 0; i < 15; i++) await Promise.resolve(); }
 
 const channels = [
-  ['wecom', 'WecomSettingsTab'], ['wecom-app', 'WecomAppSettingsTab'],
-  ['weixin', 'WeixinSettingsTab'], ['feishu', 'FeishuSettingsTab'],
-  ['dingtalk', 'DingtalkSettingsTab'], ['qq', 'QqSettingsTab'],
-  ['slack', 'SlackSettingsTab'], ['telegram', 'TelegramSettingsTab'],
-  ['discord', 'DiscordSettingsTab'], ['whatsapp', 'WhatsappSettingsTab'], ['imessage', 'IMessageSettingsTab'],
+  ['weixin', 'WeixinSettingsTab'], ['qq', 'QqSettingsTab'],
 ];
 function mockWindow(t) {
   const previous = globalThis.window;

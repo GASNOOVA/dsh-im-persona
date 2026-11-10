@@ -52,10 +52,7 @@ export const DEFAULT_CONTEXT_ENHANCEMENT_CONFIG = Object.freeze({
 const CONFIG_KEYS = ['group', 'direct'];
 const SCOPE_KEYS = ['enabled', 'fields', 'guidance'];
 const LEGACY_CONFIG_KEYS = ['groupEnabled', 'directEnabled', 'fields', 'guidance'];
-const CHANNELS = new Set([
-  'wecom', 'weixin', 'feishu', 'dingtalk', 'qq',
-  'slack', 'telegram', 'discord', 'whatsapp',
-]);
+const CHANNELS = new Set(['weixin', 'qq']);
 const SOURCE_LIMITS = {
   channel: 16, conversationType: 6, senderId: 256, senderName: 256,
   conversationTitle: 256, chatId: 256, threadId: 256, botId: 128, sentAt: 32,

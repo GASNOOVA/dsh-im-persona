@@ -1,4 +1,4 @@
-export const QQ_STYLE_ID = 'xmanrui-dsh-im-qq-settings';
+export const QQ_STYLE_ID = 'dsh-im-persona-qq-settings';
 
 const CSS = String.raw`
 .dqq-page { --ddt-accent: #1677ff; --ddt-accent-deep: #0958d9; --ddt-accent-wash: #eaf3ff; }
@@ -11,7 +11,7 @@ export function installQqStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${QQ_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = 'dsh-im-persona';
   style.dataset.pluginCss = QQ_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

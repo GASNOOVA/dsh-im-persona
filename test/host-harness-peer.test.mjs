@@ -7,11 +7,7 @@ import { createHarnessCommandExecutor } from '../plugin-src/host/harness-command
 import { runClearCommand } from '../src/channels/shared/clear-command.mjs';
 
 const clients = [
-  ['weixin', 'HarnessClient'], ['qq', 'QqHarnessClient'], ['feishu', 'HarnessClient'],
-  ['dingtalk', 'HarnessClient'], ['wecom', 'WecomHarnessClient'], ['wecom-app', 'WecomAppHarnessClient'],
-  ['telegram', 'TelegramHarnessClient'], ['discord', 'DiscordHarnessClient'], ['slack', 'SlackHarnessClient'],
-  ['whatsapp', 'WhatsappHarnessClient'], ['imessage', 'IMessageHarnessClient'], ['email', 'EmailHarnessClient'],
-  ['matrix', 'MatrixHarnessClient'], ['office', 'HarnessClient'],
+  ['weixin', 'HarnessClient'], ['qq', 'QqHarnessClient'],
 ];
 
 function fixture() {

@@ -65,9 +65,7 @@ function fixture() {
 
 test('prefixes all channels and preserves the full generated Unicode title', () => {
   const channels = {
-    weixin: '微信', feishu: '飞书', dingtalk: '钉钉', wecom: '企业微信',
-    qq: 'QQ', slack: 'Slack', telegram: 'Telegram', discord: 'Discord',
-    whatsapp: 'WhatsApp', imessage: 'iMessage', office: 'AI Office',
+    weixin: '微信', qq: 'QQ',
   };
   const original = '标题'.repeat(20) + '👨‍👩‍👧‍👦';
   for (const [channel, label] of Object.entries(channels)) {
@@ -109,13 +107,13 @@ test('waits for a real title and preserves automatic source, citations, and orig
 test('coalesces stale notifications using the latest title and preserves a manual pin', async () => {
   const f = fixture();
   const decorator = f.start();
-  const session = f.add('fresh-id', [message('feishu')]);
+  const session = f.add('fresh-id', [message('weixin')]);
   session.append('session/title', titleEvent('自动旧标题').data);
   session.append('session/title', titleEvent('人工新标题', { kind: 'user' }).data);
   await decorator.whenIdle();
   assert.equal(session.writes.length, 3);
   assert.deepEqual(session.writes.at(-1).data, {
-    title: '飞书 · 人工新标题', source: { kind: 'user' }, messageSeqs: [],
+    title: '微信 · 人工新标题', source: { kind: 'user' }, messageSeqs: [],
   });
   decorator.close();
 });
@@ -123,16 +121,16 @@ test('coalesces stale notifications using the latest title and preserves a manua
 test('does not miss an automatic revision arriving between queued decoration and cleanup', async () => {
   const f = fixture();
   const decorator = f.start();
-  const session = f.add('fresh-id', [message('slack'), titleEvent('Old')]);
+  const session = f.add('fresh-id', [message('qq'), titleEvent('Old')]);
   await Promise.resolve();
   session.append('session/title', titleEvent('New').data);
   await decorator.whenIdle();
-  assert.equal(session.writes.at(-1).data.title, 'Slack · New');
+  assert.equal(session.writes.at(-1).data.title, 'QQ · New');
   decorator.close();
 });
 
-test('recognizes persisted IM and Office RPC origins without relying on session-id prefixes', async () => {
-  for (const channel of ['weixin', 'feishu', 'dingtalk', 'wecom', 'qq', 'slack', 'telegram', 'discord', 'whatsapp', 'imessage', 'office']) {
+test('recognizes persisted Weixin and QQ RPC origins without relying on session-id prefixes', async () => {
+  for (const channel of ['weixin', 'qq']) {
     const f = fixture();
     const session = f.add('random-id', [message(channel), titleEvent('Task')]);
     const decorator = f.start();
@@ -187,9 +185,9 @@ test('ignores inherited IM messages in a Web fork but recognizes child-owned mes
   });
   await decorator.whenIdle();
   assert.equal(session.writes.length, 0);
-  session.append('user/message', message('telegram').data);
+  session.append('user/message', message('qq').data);
   await decorator.whenIdle();
-  assert.equal(session.writes.at(-1).data.title, 'Telegram · 子会话标题');
+  assert.equal(session.writes.at(-1).data.title, 'QQ · 子会话标题');
   decorator.close();
 });
 
@@ -198,11 +196,11 @@ test('processes IM steering and labels the existing title when an IM route adopt
   const decorator = f.start();
   const session = f.add('adopted', [titleEvent('Existing', { kind: 'user' })]);
   await decorator.whenIdle();
-  const event = message('discord');
-  event.data.source.rpcId = `discord-steer-${RPC_UUID}`;
+  const event = message('qq');
+  event.data.source.rpcId = `qq-steer-${RPC_UUID}`;
   session.append('user/message', event.data);
   await decorator.whenIdle();
-  assert.equal(session.writes.at(-1).data.title, 'Discord · Existing');
+  assert.equal(session.writes.at(-1).data.title, 'QQ · Existing');
   assert.equal(session.writes.at(-1).data.source.kind, 'user');
   decorator.close();
 });
@@ -231,11 +229,11 @@ test('queued writes stop on disposal, replacement, or plugin unload and Hosts st
   const foreign = other.add('same-id', [message('weixin'), titleEvent('Other Host')]);
   const decorator = f.start();
   const old = f.add('same-id', [message('weixin'), titleEvent('Old')]);
-  const replacement = f.add('same-id', [message('slack'), titleEvent('Replacement')]);
+  const replacement = f.add('same-id', [message('qq'), titleEvent('Replacement')]);
   await decorator.whenIdle();
   assert.equal(old.writes.length, 0);
   assert.equal(foreign.writes.length, 0);
-  assert.equal(replacement.writes.at(-1).data.title, 'Slack · Replacement');
+  assert.equal(replacement.writes.at(-1).data.title, 'QQ · Replacement');
   const removed = f.add('removed', [message('weixin'), titleEvent('Removed')]);
   f.live.delete(removed.id);
   await decorator.whenIdle();

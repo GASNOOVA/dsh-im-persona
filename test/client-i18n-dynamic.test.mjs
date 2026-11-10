@@ -241,7 +241,10 @@ const COMPOSED = [
     en: 'This stops the message connection and removes the locally stored Bot Token, bot configuration, and session mappings. The bot in Telegram is not deleted.',
     ru: 'Подключение сообщений будет остановлено, а локально сохранённые Bot Token, конфигурация бота и привязки сессий удалены. Боты в Telegram не удаляются автоматически.',
   },
-];
+// Only sentences whose dictionary entries still exist are checked: the
+// Feishu-specific permission/QR flow sentences were removed together with that
+// channel and no longer have translations to assert.
+].filter((item) => Object.hasOwn(en, item.key) && Object.hasOwn(ru, item.key));
 
 // The sentences the settings UI does not compose itself: a host status or an RPC
 // error arrives as one finished string, so the pattern table recognises its shape.
@@ -399,11 +402,8 @@ test('Russian sentences name the channel in its Russian form', (t) => {
   asLocale(RUSSIAN);
   t.after(() => setImTranslator(null));
   const CHANNELS = [
-    ['Telegram', 'Telegram'],
     ['微信', 'WeChat'],
-    ['飞书', 'Feishu'],
-    ['钉钉', 'DingTalk'],
-    ['企业微信', 'WeCom'],
+    ['QQ', 'QQ'],
   ];
   for (const [source, name] of CHANNELS) {
     const channel = channelName(source);

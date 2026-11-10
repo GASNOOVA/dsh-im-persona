@@ -38,8 +38,7 @@ for (const [name, value] of Object.entries({
   typertGateway: { stream() {} }, sessionController: {}, workspaceController: {},
 })) ctx.provide(name, value);
 const internals = Object.fromEntries(
-  ['Feishu', 'Weixin', 'Dingtalk', 'Wecom', 'Qq', 'Slack', 'Telegram', 'Discord', 'Whatsapp', 'Office']
-    .map((channel) => [`apply${channel}`, async () => {}]),
+  ['Weixin', 'Qq'].map((channel) => [`apply${channel}`, async () => {}]),
 );
 Object.assign(internals, {
   installUpdateRpc: () => {}, installInboundTtlRpc: () => {},
@@ -116,24 +115,24 @@ prompt(ordinary, '网页消息', 'web');
 await settle();
 assert.equal(ctx.sessionTitle.get(ordinary).title, '网页消息');
 
-// The production Feishu path can create its initial title before the first
+// The production QQ path can create its initial title before the first
 // prompt. The listener must still be alive after the Host has finished loading.
-let feishu;
+let qq;
 const creator = ctx.plugin({
-  name: 'feishu-session-regression', inject: ['sessions'],
+  name: 'qq-session-regression', inject: ['sessions'],
   apply(scoped) {
-    feishu = scoped.sessions.create(SessionId('feishu-host-generated-id'));
-    feishu.append('session/title', {
+    qq = scoped.sessions.create(SessionId('qq-host-generated-id'));
+    qq.append('session/title', {
       title: '你好，你是谁？', messageSeqs: [], source: { kind: 'user' },
     });
-    prompt(feishu, '你好，你是谁？', 'feishu');
+    prompt(qq, '你好，你是谁？', 'qq');
   },
 });
 fibers.push(creator);
 await creator.await();
 await settle();
-assert.equal(ctx.sessionTitle.get(feishu).title, '飞书 · 你好，你是谁？');
-assert.equal(ctx.sessionTitle.get(feishu).source.kind, 'user');
+assert.equal(ctx.sessionTitle.get(qq).title, 'QQ · 你好，你是谁？');
+assert.equal(ctx.sessionTitle.get(qq).source.kind, 'user');
 
 const sourceEvents = session.snapshotEvents();
 for (const event of sourceEvents.filter((entry) => entry.type === 'session/title')) {

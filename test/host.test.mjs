@@ -7,13 +7,10 @@ import { setImHostLanguage } from '../src/channels/shared/i18n.mjs';
 import { createImHostPlugin, inject, name } from '../plugin-src/host/index.mjs';
 
 const NO_CHANNELS = Object.freeze({
-  applyFeishu: async () => {}, applyWeixin: async () => {}, applyDingtalk: async () => {},
-  applyWecom: async () => {}, applyWecomApp: async () => {}, applyQq: async () => {},
-  applySlack: async () => {}, applyDiscord: async () => {}, applyWhatsapp: async () => {},
-  applyIMessage: async () => {}, applyOffice: async () => {},
+  applyWeixin: async () => {}, applyQq: async () => {},
 });
 
-test('Host forwards its management authority to both general settings and updates', async () => {
+test('Host forwards its management authority to the remaining settings RPC installers', async () => {
   for (const rpcAuthority of [undefined, 'trusted-host', 'loopback']) {
     const seen = [];
     const config = { rpcAuthority };
@@ -21,12 +18,11 @@ test('Host forwards its management authority to both general settings and update
     Object.assign(internals, {
       createDeliveryService: () => ({}),
       installHostLanguage: () => undefined,
-      installUpdateRpc: (_ctx, options) => seen.push(['update', options?.authority]),
       installInboundTtlRpc: (_ctx, options) => { assert.equal(options.config, config); seen.push(['settings', options.config.rpcAuthority]); },
       installSidebarSettingsRpc: () => {}, installDeliveryRpc: () => {},
     });
     await createImHostPlugin(internals).apply({ connection: { fetch: {} } }, config);
-    assert.deepEqual(seen, [['update', rpcAuthority], ['settings', rpcAuthority]]);
+    assert.deepEqual(seen, [['settings', rpcAuthority]]);
   }
 });
 
@@ -42,7 +38,7 @@ test('Host resolves the bot message language before channels start and serves it
   const plugin = createImHostPlugin({
     ...NO_CHANNELS,
     createDeliveryService: () => ({}),
-    installUpdateRpc: () => {}, installInboundTtlRpc: () => {}, installDeliverySyncRpc: () => {},
+    installInboundTtlRpc: () => {}, installDeliverySyncRpc: () => {},
     installDeliveryRpc: () => {}, installDeliveryHttp: () => {},
     installSessionSyncCoordinator: () => {},
     installHostLanguage: (_ctx, config) => {
@@ -55,13 +51,13 @@ test('Host resolves the bot message language before channels start and serves it
     installSidebarSettingsRpc: (_ctx, { config }) => {
       order.push(['sidebar-rpc', config.rpcAuthority, config.language]);
     },
-    applyTelegram: async () => { order.push(['telegram', resolved]); },
+    applyQq: async () => { order.push(['qq', resolved]); },
   });
 
   await plugin.apply({ connection: { fetch: {} } }, {
     language: 'en',
     rpcAuthority: 'trusted-host',
-    telegram: {},
+    qq: {},
   });
 
   assert.deepEqual(order[0], ['language', 'en']);
@@ -69,14 +65,14 @@ test('Host resolves the bot message language before channels start and serves it
     ['language-rpc', true, 'trusted-host']);
   assert.deepEqual(order.find(([kind]) => kind === 'sidebar-rpc'),
     ['sidebar-rpc', 'trusted-host', 'en']);
-  assert.deepEqual(order.find(([kind]) => kind === 'telegram'), ['telegram', true]);
+  assert.deepEqual(order.find(([kind]) => kind === 'qq'), ['qq', true]);
 });
 
 test('Host-provided describeConversation delegates through ctx.provide', async () => {
   let provided;
   const described = {
-    channel: 'telegram',
-    conversationKey: 'group:chat-1:thread-2',
+    channel: 'qq',
+    conversationKey: 'group:chat-1',
     senderId: 'user-1',
   };
   const deliveryService = {
@@ -89,8 +85,8 @@ test('Host-provided describeConversation delegates through ctx.provide', async (
     ...NO_CHANNELS,
     createDeliveryService: () => deliveryService,
     installHostLanguage: () => ({ ready: Promise.resolve() }),
-    applyTelegram: async () => {},
-    installUpdateRpc: () => {}, installInboundTtlRpc: () => {}, installDeliverySyncRpc: () => {},
+    applyQq: async () => {},
+    installInboundTtlRpc: () => {}, installDeliverySyncRpc: () => {},
     installDeliveryRpc: () => {}, installDeliveryHttp: () => {},
     installSessionSyncCoordinator: () => {},
   });
@@ -103,60 +99,33 @@ test('Host-provided describeConversation delegates through ctx.provide', async (
   assert.deepEqual(await provided.describeConversation('session-1'), described);
 });
 
-test('Host composes IM channels and the AI Office connector inside one plugin context', async () => {
+test('Host composes the Weixin and QQ channels inside one plugin context', async () => {
   const calls = [];
   const deliveryService = { marker: 'shared-delivery-service' };
   const plugin = createImHostPlugin({
     createDeliveryService: () => deliveryService,
-    applyFeishu: async (ctx, config) => calls.push(['feishu', ctx, config]),
     applyWeixin: async (ctx, config) => calls.push(['weixin', ctx, config]),
-    applyDingtalk: async (ctx, config) => calls.push(['dingtalk', ctx, config]),
-    applyWecom: async (ctx, config) => calls.push(['wecom', ctx, config]),
     applyQq: async (ctx, config) => calls.push(['qq', ctx, config]),
-    applySlack: async (ctx, config) => calls.push(['slack', ctx, config]),
-    applyTelegram: async (ctx, config) => calls.push(['telegram', ctx, config]),
-    applyDiscord: async (ctx, config) => calls.push(['discord', ctx, config]),
-    applyWhatsapp: async (ctx, config) => calls.push(['whatsapp', ctx, config]),
-    applyIMessage: async (ctx, config) => calls.push(['imessage', ctx, config]),
-    applyOffice: async (ctx, config) => calls.push(['office', ctx, config]),
   });
   const ctx = { marker: 'shared-context' };
   const config = {
     rpcAuthority: 'trusted-host',
     groupByAgentPreset: true,
-    feishu: { domain: 'feishu', groupByAgentPreset: false },
     weixin: { timeout: 30 },
-    dingtalk: { replyTimeoutMs: 60_000 },
-    wecom: { replyTimeoutMs: 60_000 },
     qq: { replyTimeoutMs: 60_000 },
-    slack: { replyTimeoutMs: 60_000 },
-    telegram: { replyTimeoutMs: 60_000 },
-    discord: { replyTimeoutMs: 60_000 },
-    whatsapp: { replyTimeoutMs: 60_000 },
-    imessage: { replyTimeoutMs: 60_000 },
-    office: { heartbeatSeconds: 30 },
   };
 
   await plugin.apply(ctx, config);
 
-  assert.equal(name, 'dsh-im-host');
+  assert.equal(name, 'dsh-im-persona-host');
   assert.deepEqual(inject, [
     'connection',
     'credentials',
     'typertGateway',
   ]);
   assert.deepEqual(calls, [
-    ['feishu', ctx, { groupByAgentPreset: true, ...config.feishu, rpcAuthority: 'trusted-host', deliveryService }],
     ['weixin', ctx, { groupByAgentPreset: true, ...config.weixin, rpcAuthority: 'trusted-host', deliveryService }],
-    ['dingtalk', ctx, { groupByAgentPreset: true, ...config.dingtalk, rpcAuthority: 'trusted-host', deliveryService }],
-    ['wecom', ctx, { groupByAgentPreset: true, ...config.wecom, rpcAuthority: 'trusted-host', deliveryService }],
     ['qq', ctx, { groupByAgentPreset: true, ...config.qq, rpcAuthority: 'trusted-host', deliveryService }],
-    ['slack', ctx, { groupByAgentPreset: true, ...config.slack, rpcAuthority: 'trusted-host', deliveryService }],
-    ['telegram', ctx, { groupByAgentPreset: true, ...config.telegram, rpcAuthority: 'trusted-host', deliveryService }],
-    ['discord', ctx, { groupByAgentPreset: true, ...config.discord, rpcAuthority: 'trusted-host', deliveryService }],
-    ['whatsapp', ctx, { groupByAgentPreset: true, ...config.whatsapp, rpcAuthority: 'trusted-host', deliveryService }],
-    ['imessage', ctx, { groupByAgentPreset: true, ...config.imessage, rpcAuthority: 'trusted-host', deliveryService }],
-    ['office', ctx, { groupByAgentPreset: true, ...config.office, rpcAuthority: 'trusted-host' }],
   ]);
 });
 
@@ -173,13 +142,13 @@ test('Host provides #65 and installs #84 with the same delivery service', async 
     async historyChecked(...args) { historyReads.push(args); return {events:[],hasMore:false}; },
     async send(...args) { sent.push(args); return { sent: true }; },
     async listTargets(botId) {
-      return { botId, channel: 'telegram', targets: [{ targetId: 'target' }] };
+      return { botId, channel: 'weixin', targets: [{ targetId: 'target' }] };
     },
     async createTarget(...args) {
       created.push(args);
       return { targetId: args[1].targetId };
     },
-    async listBots() { return [{ botId: 'bot_one', channel: 'telegram' }]; },
+    async listBots() { return [{ botId: 'bot_one', channel: 'weixin' }]; },
   };
   const provided = [];
   const rpc = [];
@@ -188,12 +157,11 @@ test('Host provides #65 and installs #84 with the same delivery service', async 
   const internals = Object.fromEntries(CHANNELS.map(([channel, applyName]) => [
     applyName,
     async (_ctx, config) => {
-      if (channel !== 'office') channelServices.push(config.deliveryService);
+      channelServices.push(config.deliveryService);
     },
   ]));
   Object.assign(internals, {
     createDeliveryService: () => deliveryService,
-    installUpdateRpc: () => {},
     installDeliveryRpc: (...args) => rpc.push(args),
     installDeliveryHttp: (...args) => http.push(args),
   });
@@ -219,7 +187,7 @@ test('Host provides #65 and installs #84 with the same delivery service', async 
     { targetId: 'new-target' },
   );
   assert.deepEqual(created, [['bot_one', { targetId: 'new-target', kind: 'chat', route: { chatId: '123456789' } }]]);
-  assert.deepEqual(await provided[0][1].listBots(), [{ botId: 'bot_one', channel: 'telegram' }]);
+  assert.deepEqual(await provided[0][1].listBots(), [{ botId: 'bot_one', channel: 'weixin' }]);
   assert.deepEqual(await provided[0][1].send('bot_one', 'target', 'hello'), { sent: true });
   assert.deepEqual(sent, [['bot_one', 'target', 'hello', undefined]]);
   assert.deepEqual(await provided[0][1].historyChecked('bot_one', {messageId:'anchor'}, {scope:'thread',limit:1}, {}), {events:[],hasMore:false});
@@ -265,7 +233,6 @@ test('#65 activates a real Cordis consumer without crossing the Connection RPC',
   ]));
   Object.assign(internals, {
     createDeliveryService: () => deliveryService,
-    installUpdateRpc: () => async () => {},
     installDeliveryRpc: () => async () => {},
   });
 
@@ -337,7 +304,7 @@ test('Host installs channel prefixes through the real Cordis sessions dependency
   ctx.provide('sessions', { get: () => session, list: () => [session] });
   const internals = Object.fromEntries(CHANNELS.map(([, applyName]) => [applyName, async () => {}]));
   Object.assign(internals, {
-    installUpdateRpc: () => {}, installInboundTtlRpc: () => {}, installDeliverySyncRpc: () => {},
+    installInboundTtlRpc: () => {}, installDeliverySyncRpc: () => {},
     installDeliveryRpc: () => {}, installSessionSyncCoordinator: () => {},
     // The language test is about session-title prefixes, not the interface
     // language: keep it off the real ~/.dsh mirror so a language a tester set
@@ -379,20 +346,8 @@ test('Session title injection returns a valid Cordis startup effect', async () =
 });
 
 const CHANNELS = [
-  ['feishu', 'applyFeishu'],
   ['weixin', 'applyWeixin'],
-  ['dingtalk', 'applyDingtalk'],
-  ['wecom', 'applyWecom'],
-  ['wecomApp', 'applyWecomApp'],
   ['qq', 'applyQq'],
-  ['slack', 'applySlack'],
-  ['telegram', 'applyTelegram'],
-  ['discord', 'applyDiscord'],
-  ['whatsapp', 'applyWhatsapp'],
-  ['imessage', 'applyIMessage'],
-  ['email', 'applyEmail'],
-  ['matrix', 'applyMatrix'],
-  ['office', 'applyOffice'],
 ];
 
 function activationFixture(failedChannels) {

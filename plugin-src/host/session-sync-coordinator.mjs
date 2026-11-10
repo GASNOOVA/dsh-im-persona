@@ -135,7 +135,7 @@ export function createSessionSyncCoordinator({
     }
   };
 
-  // A channel may render the answer itself — the Feishu process card does — so a
+  // A channel may render the answer itself — a native process card would — so a
   // target is not automatically a text recipient. A pending card is not proof of
   // delivery either: the renderer is asked first and only the targets it did not
   // confirm receive the text. Targets without a renderer keep the text path.
@@ -167,9 +167,7 @@ export function createSessionSyncCoordinator({
     const results = await Promise.allSettled(pending.map((target) => (
       deliveryService.sendSessionSyncText(
         target.botId, target.targetId, sessionId, text,
-        // Feishu renders its own card; preserve its plain fallback instead of
-        // attempting another rich card.
-        { format: target.channel === 'feishu' ? 'plain' : format },
+        { format },
       )
     )));
     results.forEach((result, index) => {

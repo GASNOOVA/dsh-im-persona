@@ -37,10 +37,6 @@ function cleanIds(values) {
     .filter(Boolean))];
 }
 
-function whatsappNumberJids(values) {
-  return cleanIds(values).map((value) => `${value.replace(/^\+/, '')}@s.whatsapp.net`);
-}
-
 /**
  * Build the one-time, backwards-compatible seed for a bot whose workspace
  * document does not yet contain an access policy.
@@ -53,11 +49,6 @@ export function initialAccessPolicyFor(channel, config = {}) {
       group: allowlistScope(),
     });
   }
-  if (key === 'feishu') {
-    const owners = cleanIds(config.ownerOpenIds ?? config.ownerOpenId);
-    const scope = owners.includes('*') ? openScope() : allowlistScope();
-    return createAccessPolicy({ direct: scope, group: scope });
-  }
   if (key === 'qq') {
     const owners = cleanIds(config.ownerUserOpenid);
     return createAccessPolicy({
@@ -65,46 +56,17 @@ export function initialAccessPolicyFor(channel, config = {}) {
       group: openScope(),
     });
   }
-  if (key === 'telegram') {
-    const users = cleanIds(config.allowedUsers);
-    if ((config.accessMode ?? 'compatible') === 'private-allowlist') {
-      return createAccessPolicy({
-        direct: allowlistScope(users),
-        group: allowlistScope(),
-      });
-    }
-    return createAccessPolicy({
-      direct: openScope(users),
-      group: openScope(),
-    });
-  }
-  if (key === 'whatsapp') {
-    const mode = config.accessMode ?? 'self-only';
-    const allowed = whatsappNumberJids(config.allowedNumbers);
-    if (mode === 'open') {
-      return createAccessPolicy({ direct: openScope(allowed), group: openScope() });
-    }
-    return createAccessPolicy({
-      direct: allowlistScope(mode === 'private-allowlist'
-        ? allowed
-        : []),
-      group: allowlistScope(),
-    });
-  }
-  if (['dingtalk', 'wecom', 'wecom-app', 'slack', 'discord', 'imessage', 'matrix'].includes(key)) {
-    return createAccessPolicy({ direct: openScope(), group: openScope() });
-  }
   throw new TypeError(`Unsupported access-policy channel: ${channel}`);
 }
 
 /**
  * Seed newly connected bots after startup has migrated existing bots with
- * initialAccessPolicyFor(). Open Feishu/QQ messages and commands in both chat
- * types; workspace ensure() preserves any policy already saved.
+ * initialAccessPolicyFor(). Open QQ messages and commands in both chat types;
+ * workspace ensure() preserves any policy already saved.
  */
 export function newBotAccessPolicyFor(channel, config = {}) {
   const key = String(channel ?? '').trim().toLowerCase();
-  if (key === 'feishu' || key === 'qq') {
+  if (key === 'qq') {
     return createAccessPolicy({ direct: openScope(), group: openScope() });
   }
   return initialAccessPolicyFor(channel, config);
@@ -113,16 +75,7 @@ export function newBotAccessPolicyFor(channel, config = {}) {
 export function privilegedSenderIdsFor(channel, config = {}) {
   const key = String(channel ?? '').trim().toLowerCase();
   if (key === 'weixin') return cleanIds(config.ownerUserId);
-  if (key === 'feishu') {
-    return cleanIds(config.ownerOpenIds ?? config.ownerOpenId).filter((id) => id !== '*');
-  }
-  if (key === 'dingtalk') {
-    const approved = Array.isArray(config.approvedSenders) ? config.approvedSenders : [];
-    return cleanIds(approved.map((entry) => entry?.staffId));
-  }
   if (key === 'qq') return cleanIds(config.ownerUserOpenid).filter((id) => id !== '*');
-  if (key === 'whatsapp') return cleanIds(config.accountJid);
-  if (key === 'discord') return cleanIds(config.ownerUserId);
   return [];
 }
 

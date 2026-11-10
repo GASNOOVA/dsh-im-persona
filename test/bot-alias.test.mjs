@@ -8,12 +8,7 @@ import { validateBotAlias, withBotAlias } from '../src/channels/shared/bot-alias
 import { validAliasPayload } from '../plugin-src/host/channels/shared/bot-alias-rpc.mjs';
 
 const channels = [
-  ['wecom', 'createWecomRpcHandler'], ['wecom-app', 'createWecomAppRpcHandler'],
-  ['weixin', 'createWeixinRpcHandler'], ['feishu', 'createFeishuRpcHandler'],
-  ['dingtalk', 'createDingtalkRpcHandler'], ['qq', 'createQqRpcHandler'],
-  ['slack', 'createSlackRpcHandler'], ['telegram', 'createTelegramRpcHandler'],
-  ['discord', 'createDiscordRpcHandler'], ['whatsapp', 'createWhatsappRpcHandler'],
-  ['imessage', 'createIMessageRpcHandler'],
+  ['weixin', 'createWeixinRpcHandler'], ['qq', 'createQqRpcHandler'],
 ];
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-alias-'));

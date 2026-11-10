@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "IM 机器人 (dsh-im)",
-    "description": "把微信、飞书、企微、钉钉、QQ、Telegram、WhatsApp、Slack、Discord、Matrix接入DSH。"
+    "title": "IM 机器人（个人版）",
+    "description": "个人定制版：把微信与 QQ 接入 DSH，并支持为每个机器人配置角色人设。"
   }
 }

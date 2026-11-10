@@ -8,9 +8,9 @@ The optional `dshImClient` service exposes the existing IM management panel to a
 
 On DSH versions with plugin detail actions, **Open IM bots** opens the same management panel in the main area. The panel has no back button; use the host sidebar to switch panels. This entry uses the optional `layout` service and the `plugins.detail.actions` slot. Older DSH versions retain the Settings entry.
 
-「IM机器人」页面右上角的「会话记录」按钮与「通用设置」并列，打开各 IM 通道已绑定会话的只读列表；点击 Session ID 可查看用户与助手正文、刷新或加载更早消息。列表和正文页均提供「返回 IM机器人」。会话记录不注册独立侧边栏入口；只有宿主提供导航服务与主面板槽位时才显示按钮。目录覆盖标准机器人状态路径、微信账号状态和已配置的飞书旧版状态，不推断自定义 `dataDir` / `botsDir`。
+「IM机器人」页面右上角的「会话记录」按钮与「通用设置」并列，打开各 IM 通道已绑定会话的只读列表；点击 Session ID 可查看用户与助手正文、刷新或加载更早消息。列表和正文页均提供「返回 IM机器人」。会话记录不注册独立侧边栏入口；只有宿主提供导航服务与主面板槽位时才显示按钮。目录覆盖标准机器人状态路径和微信账号状态，不推断自定义 `dataDir` / `botsDir`。
 
-**Session history**, next to **General settings** in the IM bots toolbar, opens a read-only list of bound IM sessions. Select a Session ID to read user and assistant text, refresh, or load earlier messages. Both the list and transcript provide **Back to IM bots**. History has no separate sidebar entry, and the toolbar action appears only when the host provides navigation and a main-panel slot. Discovery covers standard bot state, Weixin accounts, and configured Feishu legacy state; custom `dataDir` / `botsDir` overrides are not inferred.
+**Session history**, next to **General settings** in the IM bots toolbar, opens a read-only list of bound IM sessions. Select a Session ID to read user and assistant text, refresh, or load earlier messages. Both the list and transcript provide **Back to IM bots**. History has no separate sidebar entry, and the toolbar action appears only when the host provides navigation and a main-panel slot. Discovery covers standard bot state and Weixin accounts; custom `dataDir` / `botsDir` overrides are not inferred.
 
 支持 `sidebar.panellist` 的宿主同时提供左侧「IM机器人」入口，与插件详情操作共用同一个 `main` 面板。侧栏沿用插件页的双对话框造型，在 16×16 矢量画布上使用与宿主普通图标一致的 1px 描边，通过 `currentColor` 跟随侧栏颜色和传入尺寸；插件页仍使用原彩色图标。此入口不调用 `setSettingsVisible()`，设置入口和插件详情操作均保留。侧栏槽位消失时只移除侧栏入口，主面板或依赖服务退出时清理全部对应注册。
 
@@ -38,9 +38,9 @@ interface DshImClient {
 | `setSettingsVisible(visible)` | 只接受 boolean，重复调用无副作用。false 撤销入口及等待中的注册，true 恢复 | Accepts only booleans; repeated calls are idempotent. False removes both the entry and any pending registration; true restores them |
 | `settingsVisible()` | 返回入口当前是否已注册，不表示设置弹窗是否打开。等待槽位、已隐藏或已卸载时为 false | Reports whether the entry is currently registered, not whether the settings dialog is open. False while waiting, hidden or disposed |
 
-`preferredSectionId` 只决定首次挂载的栏目，支持 `weixin`、`feishu`、`dingtalk`、`wecom`、`wecomApp`、`qq`、`slack`、`telegram`、`discord`、`whatsapp`、`imessage`、`office` 和 `global-settings`。省略或无效值回退到微信。已挂载后改变该值不会覆盖用户选择；需要重新定位时由宿主重新挂载。
+`preferredSectionId` 只决定首次挂载的栏目，支持 `weixin`、`qq` 和 `global-settings`。省略或无效值回退到微信。已挂载后改变该值不会覆盖用户选择；需要重新定位时由宿主重新挂载。
 
-`preferredSectionId` selects the initial section using the IDs above. Missing or unknown IDs default to WeChat. Changing the prop after mounting does not override the reader's selection; remount deliberately to reset it.
+`preferredSectionId` selects the initial section using `weixin`, `qq`, or `global-settings`. Missing or unknown IDs default to WeChat. Changing the prop after mounting does not override the reader's selection; remount deliberately to reset it.
 
 `setSettingsVisible()` 只影响当前客户端内存，不写服务器配置或浏览器存储。因此桌面端隐藏设置入口不影响另一个浏览器。刷新后恢复默认，由宿主再次按需接管。隐藏入口不会停止机器人或外部已挂载的面板。V1 按一个活跃管理面板接入，不提供多个面板间的状态同步。此 API 与上方持久化的侧边栏入口设置独立。
 

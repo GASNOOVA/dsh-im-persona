@@ -118,6 +118,7 @@ export class WeixinRuntime {
   #harness;
   #state;
   #contextEnhancement;
+  #persona;
   #accessPolicy;
   #logger;
   #diagnostics;
@@ -138,6 +139,7 @@ export class WeixinRuntime {
     harness,
     state,
     contextEnhancement,
+    persona,
     accessPolicy,
     logger = console,
     diagnostics,
@@ -154,6 +156,7 @@ export class WeixinRuntime {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#persona = persona;
     this.#accessPolicy = accessPolicy;
     this.#logger = logger;
     this.#diagnostics = diagnostics ?? createWeixinDiagnostics({ logger });
@@ -201,6 +204,7 @@ export class WeixinRuntime {
         harness: this.#harness,
         state: this.#state,
         contextEnhancement: this.#contextEnhancement,
+        persona: this.#persona,
         accessPolicy: this.#accessPolicy,
         status: this.#status,
         logger: this.#logger,

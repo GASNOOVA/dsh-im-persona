@@ -28,9 +28,7 @@ const CATALOG = Object.freeze({
   failures: Object.freeze([]),
 });
 const channels = await Promise.all([
-  ['weixin', 'WeixinSettingsTab'], ['wecom', 'WecomSettingsTab'], ['feishu', 'FeishuSettingsTab'],
-  ['dingtalk', 'DingtalkSettingsTab'], ['qq', 'QqSettingsTab'], ['slack', 'SlackSettingsTab'],
-  ['telegram', 'TelegramSettingsTab'], ['discord', 'DiscordSettingsTab'], ['whatsapp', 'WhatsappSettingsTab'],
+  ['weixin', 'WeixinSettingsTab'], ['qq', 'QqSettingsTab'],
 ].map(async ([name, component]) => {
   const api = await import(`../plugin-src/client/channels/${name}/api.js`);
   const ui = await import(`../plugin-src/client/channels/${name}/index.js`);
@@ -281,35 +279,4 @@ test('English model and effort settings translate defaults and explanatory text'
   assert.match(textOf(renderer.root), /Model default · High/u);
   await openMenu(renderer.root, 'Reasoning effort');
   assert.match(textOf(renderer.root), /Use the default reasoning effort from the model or provider/u);
-});
-
-test('WeCom releases the card after a model save failure and retries without changing the old selection', async (t) => {
-  mockWindow(t);
-  const channel = channels.find(({ name }) => name === 'wecom');
-  let current = snapshot('wecom');
-  let attempts = 0;
-  const renderer = await mount(t, channel.Settings, { rpcCall: async (endpoint, payload) => {
-    if (endpoint === 'connection.status') return { ok: true, value: current };
-    assert.equal(endpoint, 'bot.model.set');
-    if (++attempts === 1) return { ok: false, error: {
-      code: 'model-catalog-unavailable', message: 'Could not load models',
-      details: { reason: 'ECONNRESET', method: 'llm.models' },
-    } };
-    current = { ...current, revision: current.revision + 1,
-      bots: current.bots.map(bot => bot.botId === payload.botId ? { ...bot, model: payload.model } : bot) };
-    return { ok: true, value: current };
-  } });
-  const first = () => renderer.root.findByProps({ 'data-bot-id': 'wecom_0' });
-  await openMenu(first(), '模型');
-  await choose(first(), 'GPT-5openai/gpt-5');
-  assert.equal(first().findAllByProps({ role: 'menu' }).length, 0);
-  assert.equal(first().findByType(ModelEditor).props.model, null);
-  assert.equal(first().findByProps({ 'aria-label': '模型' }).props.disabled, false);
-  assert.match(textOf(first().findByProps({ role: 'alert' })), /ECONNRESET/u);
-  await openMenu(first(), '模型');
-  assert.match(textOf(first().findByProps({ 'aria-checked': true })), /跟随默认模型/u);
-  await choose(first(), 'GPT-5openai/gpt-5');
-  assert.equal(attempts, 2);
-  assert.deepEqual(first().findByType(ModelEditor).props.model, MODEL);
-  assert.equal(first().findAllByProps({ role: 'alert' }).length, 0);
 });

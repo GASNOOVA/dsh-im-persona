@@ -30,15 +30,15 @@ const FIELD_HELP = Object.freeze({
   }),
   conversationTitle: Object.freeze({
     labelKey: 'conversationTitleHelpLabel',
-    text: '该字段不是每个渠道都能提供。钉钉群聊会带上群名。当前消息没有会话标题时，即使已选择该字段，<dsh_im_source> 中也会省略 conversationTitle。',
+    text: '该字段不是每个渠道都能提供。QQ 群聊会带上群名。当前消息没有会话标题时，即使已选择该字段，<dsh_im_source> 中也会省略 conversationTitle。',
   }),
   chatId: Object.freeze({
     labelKey: 'chatIdHelpLabel',
-    text: '该字段不是每个渠道都能提供。会话标识用于区分不同的群组或私聊，飞书群聊会带上群 ID。当前消息没有会话标识时，即使已选择该字段，<dsh_im_source> 中也会省略 chatId。',
+    text: '该字段不是每个渠道都能提供。会话标识用于区分不同的群组或私聊，QQ 群聊会带上群 ID。当前消息没有会话标识时，即使已选择该字段，<dsh_im_source> 中也会省略 chatId。',
   }),
   threadId: Object.freeze({
     labelKey: 'threadIdHelpLabel',
-    text: '该字段不是每个渠道都能提供。飞书话题群的消息会带上话题 ID，用于区分同一群组内的不同话题；当前消息不在话题中时，即使已选择该字段，<dsh_im_source> 中也会省略 threadId。',
+    text: '该字段不是每个渠道都能提供。当前保留的渠道暂不提供话题标识；即使已选择该字段，<dsh_im_source> 中通常也会省略 threadId。',
   }),
   sentAt: Object.freeze({
     labelKey: 'sentAtHelpLabel',

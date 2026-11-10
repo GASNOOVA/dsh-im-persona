@@ -72,11 +72,7 @@ for (const variant of ['canceled', 'replaced', 'gap', 'unrelated', 'completed'])
 }
 
 const clients = [
-  ['weixin', 'HarnessClient'], ['qq', 'QqHarnessClient'], ['feishu', 'HarnessClient'],
-  ['dingtalk', 'HarnessClient'], ['wecom', 'WecomHarnessClient'], ['wecom-app', 'WecomAppHarnessClient'],
-  ['telegram', 'TelegramHarnessClient'], ['discord', 'DiscordHarnessClient'], ['slack', 'SlackHarnessClient'],
-  ['whatsapp', 'WhatsappHarnessClient'], ['imessage', 'IMessageHarnessClient'], ['email', 'EmailHarnessClient'],
-  ['matrix', 'MatrixHarnessClient'], ['office', 'HarnessClient'],
+  ['weixin', 'HarnessClient'], ['qq', 'QqHarnessClient'],
 ];
 for (const [channel, exportName] of clients) {
   test(`${channel} releases an early failed turn with MODEL_UNAVAILABLE instead of waiting for timeout`, async () => {
@@ -100,46 +96,5 @@ for (const [channel, exportName] of clients) {
       assert.equal(classifyMessageFailure(error).code, 'MODEL_UNAVAILABLE');
       return true;
     });
-  });
-}
-
-for (const channel of ['discord', 'whatsapp']) {
-  test(`${channel} bridge reports the model error and drains a queued /new`, async (t) => {
-    const title = channel === 'discord' ? 'Discord' : 'Whatsapp';
-    const { [`${title}HarnessClient`]: Client } = await import(`../src/channels/${channel}/harness-client.mjs`);
-    const { [`${title}HarnessBridge`]: Bridge } = await import(`../src/channels/${channel}/${channel}-bridge.mjs`);
-    const client = new Client({ workspace: '/tmp', baseUrl: 'http://127.0.0.1:3080' });
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2_000)]);
-    let events = [end(41, 3, { kind: 'completed' })];
-    client.sessionExists = async () => true;
-    client.rpc = async (method, _payload, _timeout, options) => {
-      if (method === 'host.describe') return {};
-      if (method === 'workspace.list') return { archivedSessionIds: [] };
-      if (method === 'session.history') return { events: events.map(event => ({ event })) };
-      if (method === 'session.prompt') { events.push(...failedPrompt(options.rpcId)); return { accepted: true }; }
-      assert.fail(`unexpected RPC ${method}`);
-    };
-    client.watchInteractions = async (_sessionId, { signal, onOpen }) => {
-      onOpen?.();
-      if (!signal.aborted) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
-    };
-    const seen = new Set(), sent = [];
-    let binding = 'session';
-    const bridge = new Bridge({ harness: client, signal, coalesceWindowMs: 0,
-      state: { sessionFor: () => binding, hasSeen: id => seen.has(id),
-        markSeen: async id => { seen.add(id); }, clearSession: async () => { binding = null; } },
-      bot: { sendText: async (_target, text) => { sent.push(text); } },
-      logger: { warn() {}, error() {}, info() {} },
-    });
-    t.after(async () => { controller.abort(); await bridge.waitForIdle(); });
-    const message = (messageId, content) => ({ messageId, content, senderId: 'owner',
-      senderIsBot: false, kind: 'direct', conversationId: 'chat', addressed: true,
-      replyTarget: { jid: 'self', selfChat: true, id: 'chat' } });
-    await Promise.all([bridge.accept(message('question', 'hello')), bridge.accept(message('new', '/new'))]);
-    assert.equal(signal.aborted, false, 'the failure must release the queue before the guard timeout');
-    assert.ok(sent.some(text => text.includes('当前模型不存在')));
-    assert.ok(sent.some(text => text.includes('暂时无法创建新会话')));
-    assert.equal(binding, 'session', 'a failed eager create keeps the previous binding');
   });
 }

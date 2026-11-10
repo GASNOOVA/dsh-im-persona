@@ -99,7 +99,7 @@ async function login(launchUrl, hostname) {
   return { origin: url.origin, cookie };
 }
 
-function rpc(browser, channel = 'feishu', method = 'connection.status', headers = {}, payload = {}) {
+function rpc(browser, channel = 'weixin', method = 'connection.status', headers = {}, payload = {}) {
   return request(new URL(`/api/dsh-im/${channel}`, browser.origin), {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: browser.origin,
@@ -109,7 +109,7 @@ function rpc(browser, channel = 'feishu', method = 'connection.status', headers 
   });
 }
 
-async function readyStatus(browser, channel = 'feishu') {
+async function readyStatus(browser, channel = 'weixin') {
   const deadline = Date.now() + 10_000;
   // HTTP readiness can precede the channel controllers finishing startup.
   for (;;) {
@@ -143,9 +143,6 @@ const protectedMethods = [
     ['dsh-im-settings', `settings.${setting}.set`, value],
   ]),
   ['dsh-im-settings', 'settings.inbound-ttl.sweep', {}],
-  ['dsh-im', 'update.status', {}],
-  ['dsh-im', 'update.check', {}],
-  ['dsh-im', 'update.install', { checkId: 'not-confirmed', requestId: 'must-not-install' }],
 ];
 
 async function verifyDenied(name, browser, status, headers = {}) {
@@ -167,9 +164,6 @@ async function verifySettings(name, browser, persisted = false) {
     assert.deepEqual(JSON.parse(reread.body).result.value, value);
   }
   expectStatus(`${name}: sweep empty test home`, await rpc(browser, 'dsh-im-settings', 'settings.inbound-ttl.sweep'), 200, true);
-  const update = await rpc(browser, 'dsh-im', 'update.status');
-  expectStatus(`${name}: update status`, update, 200, true);
-  assert.equal(JSON.parse(update.body).result.value.canInstall, false, 'status alone must never authorize installation');
   expectStatus(`${name}: sidebar`, await rpc(browser, 'dsh-im-sidebar', 'settings.sidebar-entry.get'), 200, true);
 }
 
@@ -178,7 +172,7 @@ try {
   const packages = {
     '@deepseek-ai/dsh-base': resolve(harnessRoot, 'packages/bundle/base'),
     '@deepseek-ai/dsh-web-app': resolve(harnessRoot, 'packages/bundle/web-app'),
-    '@xmanrui/dsh-im': pluginRoot,
+    'dsh-im-persona': pluginRoot,
   };
   for (const [name, path] of Object.entries(packages)) {
     const target = join(profile, 'node_modules', name);
@@ -201,8 +195,7 @@ try {
   expectStatus('LAN authenticated web page', await request(new URL('/', lan.origin), {
     headers: { cookie: lan.cookie },
   }), 200);
-  const channels = ['feishu', 'weixin', 'dingtalk', 'wecom', 'wecom-app', 'qq',
-    'slack', 'telegram', 'discord', 'whatsapp', 'imessage', 'email', 'matrix', 'office'];
+  const channels = ['weixin', 'qq'];
   for (const channel of channels) {
     expectStatus(`LAN default: ${channel}`, await readyStatus(lan, channel), 200, true);
   }
@@ -210,8 +203,8 @@ try {
   expectStatus('LAN delivery reaches business handler', delivery, 200);
   assert.equal(JSON.parse(delivery.body).result.error.code, 'unknown-bot');
   expectStatus('LAN forged cookie', await rpc({ ...lan, cookie: 'invalid=invalid' }), 401);
-  expectStatus('Untrusted Host', await rpc(lan, 'feishu', 'connection.status', { host: 'untrusted.invalid' }), 403);
-  expectStatus('Cross-origin request', await rpc(lan, 'feishu', 'connection.status', { origin: 'https://untrusted.invalid' }), 403);
+  expectStatus('Untrusted Host', await rpc(lan, 'weixin', 'connection.status', { host: 'untrusted.invalid' }), 403);
+  expectStatus('Cross-origin request', await rpc(lan, 'weixin', 'connection.status', { origin: 'https://untrusted.invalid' }), 403);
   await verifyDenied('LAN anonymous management', anonymous, 401);
   await verifyDenied('LAN forged cookie management', { ...lan, cookie: 'invalid=invalid' }, 401);
   await verifyDenied('Untrusted management Host', lan, 403, { host: 'untrusted.invalid' });
@@ -228,22 +221,22 @@ try {
     await verifySettings(`${hostname} default`, browser);
     // Emulate a browser/proxy dropping the Origin port; this is a header-level
     // reproduction, not evidence that a particular browser emits that header.
-    expectStatus(`${hostname} port-less Origin rejected`, await rpc(browser, 'dingtalk',
+    expectStatus(`${hostname} port-less Origin rejected`, await rpc(browser, 'qq',
       'connection.status', { origin: `http://${hostname}` }), 403);
-    expectStatus(`${hostname} cross-site request rejected`, await rpc(browser, 'dingtalk',
+    expectStatus(`${hostname} cross-site request rejected`, await rpc(browser, 'qq',
       'connection.status', { 'sec-fetch-site': 'cross-site' }), 403);
   }
-  expectStatus('Loopback Host/Origin hostname mismatch rejected', await rpc(local, 'dingtalk',
+  expectStatus('Loopback Host/Origin hostname mismatch rejected', await rpc(local, 'qq',
     'connection.status', { origin: localhost.origin }), 403);
   expectStatus('Authenticated domain without --trusted-host rejected',
-    await rpc(await login(launchUrl, domain), 'dingtalk'), 403);
+    await rpc(await login(launchUrl, domain), 'qq'), 403);
 
   await stop();
-  await writeFile(join(profile, 'cordis.patch.yml'), '- id: xmanrui-dsh-im\n  config:\n    rpcAuthority: trusted-host\n');
+  await writeFile(join(profile, 'cordis.patch.yml'), '- id: dsh-im-persona\n  config:\n    rpcAuthority: trusted-host\n');
   const domainLaunchUrl = await start([lanIp, domain]);
   const trustedDomain = await login(domainLaunchUrl, domain);
   expectStatus('Trusted domain without login rejected',
-    await rpc({ origin: trustedDomain.origin }, 'dingtalk'), 401);
+    await rpc({ origin: trustedDomain.origin }, 'qq'), 401);
   for (const channel of channels) {
     expectStatus(`Domain with --trusted-host: ${channel}`, await readyStatus(trustedDomain, channel), 200, true);
   }
@@ -252,11 +245,11 @@ try {
   const otherTrustedOrigin = new URL(trustedDomain.origin);
   otherTrustedOrigin.hostname = lanIp;
   expectStatus('Two trusted hosts still require matching Origin', await rpc(trustedDomain,
-    'dingtalk', 'connection.status', { origin: otherTrustedOrigin.origin }), 403);
+    'qq', 'connection.status', { origin: otherTrustedOrigin.origin }), 403);
   await verifyDenied('Trusted management hosts still require matching Origin', trustedDomain, 403, { origin: otherTrustedOrigin.origin });
 
   await stop();
-  await writeFile(join(profile, 'cordis.patch.yml'), '- id: xmanrui-dsh-im\n  config:\n    rpcAuthority: loopback\n');
+  await writeFile(join(profile, 'cordis.patch.yml'), '- id: dsh-im-persona\n  config:\n    rpcAuthority: loopback\n');
   const restrictedUrl = await start();
   expectStatus('Explicit loopback rejects LAN', await rpc(await login(restrictedUrl, lanIp)), 403);
   await verifyDenied('Explicit loopback management rejects LAN', await login(restrictedUrl, lanIp), 403);

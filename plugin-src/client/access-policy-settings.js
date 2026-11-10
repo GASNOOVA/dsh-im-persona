@@ -8,7 +8,7 @@ import {
 import { h, localizeText } from './i18n.js';
 
 export const ACCESS_POLICY_ENDPOINT = 'bot.access-policy.set';
-const CONFIRMED_OWNER_CHANNELS = new Set(['weixin', 'feishu', 'qq', 'whatsapp', 'discord']);
+const CONFIRMED_OWNER_CHANNELS = new Set(['weixin', 'qq']);
 
 export const ACCESS_CHANNEL_DEFINITIONS = Object.freeze({
   weixin: Object.freeze({
@@ -16,64 +16,11 @@ export const ACCESS_CHANNEL_DEFINITIONS = Object.freeze({
     directPlaceholder: '填写微信用户 ID',
     groupSupported: false,
   }),
-  feishu: Object.freeze({
-    directUserLabel: '飞书 Open ID',
-    directPlaceholder: '填写使用者的 Open ID（ou_xxx），不是机器人 ID',
-    groupUserLabel: '群成员 Open ID',
-    groupPlaceholder: '填写使用者的 Open ID（ou_xxx），不是机器人 ID',
-  }),
-  dingtalk: Object.freeze({
-    directUserLabel: '钉钉用户 ID',
-    directPlaceholder: '填写 senderStaffId 或 senderId',
-    groupUserLabel: '群成员用户 ID',
-    groupPlaceholder: '填写 senderStaffId 或 senderId',
-  }),
-  wecom: Object.freeze({
-    directUserLabel: '企业微信用户 ID',
-    directPlaceholder: '填写 userid',
-    groupUserLabel: '群成员用户 ID',
-    groupPlaceholder: '填写 userid',
-  }),
-  wecomApp: Object.freeze({
-    directUserLabel: '企业微信用户 ID',
-    directPlaceholder: '填写 userid',
-    groupUserLabel: '群成员用户 ID',
-    groupPlaceholder: '填写 userid',
-  }),
   qq: Object.freeze({
     directUserLabel: 'QQ User Open ID',
     directPlaceholder: '填写 user_openid',
     groupUserLabel: '群成员 Open ID',
     groupPlaceholder: '填写 member_openid',
-  }),
-  slack: Object.freeze({
-    directUserLabel: 'Slack User ID',
-    directPlaceholder: 'U0123456789',
-    groupUserLabel: '群成员 User ID',
-    groupPlaceholder: 'U0123456789',
-  }),
-  telegram: Object.freeze({
-    directUserLabel: 'Telegram User ID',
-    directPlaceholder: '填写数字 User ID',
-    groupUserLabel: '群成员 User ID',
-    groupPlaceholder: '填写数字 User ID',
-  }),
-  discord: Object.freeze({
-    directUserLabel: 'Discord User ID',
-    directPlaceholder: '填写数字 User ID',
-    groupUserLabel: '群成员 User ID',
-    groupPlaceholder: '填写数字 User ID',
-  }),
-  whatsapp: Object.freeze({
-    directUserLabel: 'WhatsApp 电话号码或 JID',
-    directPlaceholder: '8613800000000 或完整 JID',
-    groupUserLabel: '群成员电话号码或 JID',
-    groupPlaceholder: '8613800000000 或完整 JID',
-  }),
-  imessage: Object.freeze({
-    directUserLabel: 'iMessage Chat GUID',
-    directPlaceholder: 'iMessage;+;chat123',
-    groupSupported: false,
   }),
 });
 
@@ -277,9 +224,7 @@ export function AccessPolicySettingsPage({ channel, account, rpcCall, onSaved })
   const ownerHelp = CONFIRMED_OWNER_CHANNELS.has(channel)
     ? '已由接入流程确认的所有者可以访问并执行命令，不受本页限制。未识别到所有者身份时，按本页访问设置执行。'
     : '原所有者或扫码接入者始终可以访问并执行命令；以下设置仅约束其他用户。';
-  const identityHelp = channel === 'feishu'
-    ? '白名单请填写使用者的 Open ID，不是机器人的 Open ID。仅保存通配符的接入配置不包含所有者身份。'
-    : null;
+  const identityHelp = null;
   const initialPolicy = normalizeAccessPolicy(account?.accessPolicy);
   const initialKey = JSON.stringify(initialPolicy);
   const [draft, setDraft] = React.useState(() => clonePolicy(

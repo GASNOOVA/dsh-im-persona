@@ -710,7 +710,7 @@ test('disabled saved targets never fall through to Session binding delivery', as
 
 test('a confirmed card is the answer: the coordinator sends no second copy', async (t) => {
   const rendered = [];
-  const unregister = registerSessionSyncMirror({ channel: 'feishu', botId: 'bot-1' },
+  const unregister = registerSessionSyncMirror({ channel: 'qq', botId: 'bot-1' },
     async (request) => {
       rendered.push(request);
       return true;
@@ -718,7 +718,7 @@ test('a confirmed card is the answer: the coordinator sends no second copy', asy
   t.after(unregister);
   const sends = [];
   const coordinator = createSessionSyncCoordinator({
-    deliveryService: targetService(sends, [{ channel: 'feishu', botId: 'bot-1', targetId: 't1' }]),
+    deliveryService: targetService(sends, [{ channel: 'qq', botId: 'bot-1', targetId: 't1' }]),
     loadSettings: settings({ deliverModelAnswers: true, modelIcon: '🤖' }),
   });
   await scheduledTurn(coordinator, 'scheduled answer');
@@ -726,7 +726,7 @@ test('a confirmed card is the answer: the coordinator sends no second copy', asy
 
   assert.deepEqual(sends, [], 'the card already carries the answer');
   assert.equal(rendered.length, 1);
-  assert.deepEqual(rendered[0].target, { channel: 'feishu', botId: 'bot-1', targetId: 't1' });
+  assert.deepEqual(rendered[0].target, { channel: 'qq', botId: 'bot-1', targetId: 't1' });
   assert.equal(rendered[0].sessionId, 'session-1');
   assert.equal(rendered[0].turn, 1);
   // The card shows the answer itself, without the label that marks a message.
@@ -738,11 +738,11 @@ test('an unconfirmed card falls back to exactly one text delivery', async (t) =>
     'renders nothing': async () => false,
     'throws': async () => { throw new Error('provider failure'); },
   })) {
-    const unregister = registerSessionSyncMirror({ channel: 'feishu', botId: 'bot-1' }, render);
+    const unregister = registerSessionSyncMirror({ channel: 'qq', botId: 'bot-1' }, render);
     const sends = [];
     const warnings = [];
     const coordinator = createSessionSyncCoordinator({
-      deliveryService: targetService(sends, [{ channel: 'feishu', botId: 'bot-1', targetId: 't1' }]),
+      deliveryService: targetService(sends, [{ channel: 'qq', botId: 'bot-1', targetId: 't1' }]),
       loadSettings: settings({ deliverModelAnswers: true, modelIcon: '🤖' }),
       logger: { warn: (line) => warnings.push(line) },
     });
@@ -752,19 +752,19 @@ test('an unconfirmed card falls back to exactly one text delivery', async (t) =>
 
     assert.equal(sends.length, 1, label);
     assert.equal(sends[0].targetId, 't1', label);
-    assert.equal(sends[0].options.format, 'plain', label);
+    assert.equal(sends[0].options.format, 'markdown', label);
     assert.equal(sends[0].text, '🤖\n\nscheduled answer', label);
   }
 });
 
 test('only the targets whose card did not confirm receive text', async (t) => {
-  const unregister = registerSessionSyncMirror({ channel: 'feishu', botId: 'bot-1' },
+  const unregister = registerSessionSyncMirror({ channel: 'qq', botId: 'bot-1' },
     async () => true);
   t.after(unregister);
   const sends = [];
   const targets = [
-    { channel: 'feishu', botId: 'bot-1', targetId: 't1' },
-    { channel: 'telegram', botId: 'bot-2', targetId: 't2' },
+    { channel: 'qq', botId: 'bot-1', targetId: 't1' },
+    { channel: 'weixin', botId: 'bot-2', targetId: 't2' },
   ];
   const coordinator = createSessionSyncCoordinator({
     deliveryService: targetService(sends, targets),
@@ -779,12 +779,12 @@ test('only the targets whose card did not confirm receive text', async (t) => {
 
 test('a mirrored user input never waits for a card receipt', async (t) => {
   const rendered = [];
-  const unregister = registerSessionSyncMirror({ channel: 'feishu', botId: 'bot-1' },
+  const unregister = registerSessionSyncMirror({ channel: 'qq', botId: 'bot-1' },
     async (request) => { rendered.push(request); return true; });
   t.after(unregister);
   const sends = [];
   const coordinator = createSessionSyncCoordinator({
-    deliveryService: targetService(sends, [{ channel: 'feishu', botId: 'bot-1', targetId: 't1' }]),
+    deliveryService: targetService(sends, [{ channel: 'qq', botId: 'bot-1', targetId: 't1' }]),
     loadSettings: settings({ mirrorUserInput: true, deliverModelAnswers: true, inputIcon: '👤' }),
   });
   void coordinator.enqueue('session-1', turnStart());

@@ -15,7 +15,7 @@ test('the published client registers the complete Russian pack and renders each 
   const require = createRequire(import.meta.url);
   runInNewContext(await readFile(new URL('../lib/client.js', import.meta.url), 'utf8'), {
     window: { __ModuleLoader__: { load({ id, factory }) {
-      assert.equal(id, '@xmanrui/dsh-im');
+      assert.equal(id, 'dsh-im-persona');
       client = factory(require);
     } } },
     AbortController, setTimeout, clearTimeout, console,
@@ -35,7 +35,7 @@ test('the published client registers the complete Russian pack and renders each 
       return () => languages.delete(definition.id);
     },
     register(namespace, idOrDictionaries, dictionary) {
-      assert.equal(namespace, 'dsh-im');
+      assert.equal(namespace, 'dsh-im-persona');
       const entries = typeof idOrDictionaries === 'string'
         ? [[idOrDictionaries, dictionary]] : Object.entries(idOrDictionaries);
       for (const [id, value] of entries) {
@@ -75,7 +75,7 @@ test('the published client registers the complete Russian pack and renders each 
     assert.deepEqual({ ...dictionaries.get(id) }, source, `published ${id} dictionary is stale`);
   }
   assert.equal(locale.bind()('绑定 DS Bot'), 'Привязать DS Bot');
-  assert.equal(locale.bind()('机器人群聊行为'), 'Поведение бота в группах');
+  assert.equal(locale.bind()('通用设置'), 'Общие настройки');
   for (const [id, label, loading] of [
     ['ru', 'IM-боты', 'Загружаем настройки боковой панели…'],
     ['en', 'IM bots', en['正在读取侧边栏设置…']],

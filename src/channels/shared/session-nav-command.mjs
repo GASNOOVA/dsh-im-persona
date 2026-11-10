@@ -31,7 +31,7 @@ const TAIL_EXPORT_EVENT_CAP = 5_000;
 const TAIL_TOTAL_BUDGET = 4_000;
 const RING_LIST_LIMIT = 20;
 
-const INJECTED_CONTEXT_PREFIX = /^(?:<dsh_im_source>[\s\S]*?<\/dsh_im_source>\s*)?(?:<dsh_im_source_guidance>[\s\S]*?<\/dsh_im_source_guidance>\s*)?(?:<dsh_im_reply_to>[\s\S]*?<\/dsh_im_reply_to>\s*)?/u;
+const INJECTED_CONTEXT_PREFIX = /^(?:<dsh_im_persona>[\s\S]*?<\/dsh_im_persona>\s*)?(?:<dsh_im_source>[\s\S]*?<\/dsh_im_source>\s*)?(?:<dsh_im_source_guidance>[\s\S]*?<\/dsh_im_source_guidance>\s*)?(?:<dsh_im_reply_to>[\s\S]*?<\/dsh_im_reply_to>\s*)?/u;
 
 export function isSessionNavCommand(text) {
   return typeof text === 'string' && SESSION_NAV_COMMAND.test(text.trim());

@@ -12,3 +12,6 @@ e2e/
 # local verification helpers (personal paths, not part of the package)
 restart-host.sh
 restart-host.log
+
+# personal edition: lib/ is a build artifact (npm run build), not committed
+lib/

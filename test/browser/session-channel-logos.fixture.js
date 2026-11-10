@@ -20,7 +20,7 @@ async function until(predicate, message) {
 const titles = [
   '整理今天的项目进度', '分析本周的客户反馈', '跟进产品发布清单', '汇总团队讨论结果',
   '检查订单处理状态', 'Review the launch checklist', 'Plan the next release',
-  'Summarize community feedback', '确认下周会议安排', '测试 iMessage 渠道', '测试 Matrix 渠道', '处理跨团队协作任务',
+  'Summarize community feedback', '确认下周会议安排', '测试第二个渠道', '测试第三个渠道', '处理跨团队协作任务',
 ];
 const initial = Object.entries(SESSION_CHANNEL_LABELS).map(([channel, labels], index) => ({
   id: channel, title: `${labels[0]} · ${titles[index]}`, channel,
@@ -61,7 +61,7 @@ function render() {
       h('section', { className: 'search' }, h('h2', null, '搜索结果'),
         h('button', { id: 'search-row', className: '_searchResultRow_dsh_25', role: 'treeitem', 'aria-selected': false },
           h('span', { className: '_searchResultHeading_dsh_305' },
-            h('span', { id: 'search-title', className: '_searchResultTitle_dsh_313' }, '飞书 · 分析客户反馈')),
+            h('span', { id: 'search-title', className: '_searchResultTitle_dsh_313' }, 'QQ · 分析客户反馈')),
           h('small', null, 'dsh-im · 找到一条相关会话'))),
       h('p', { className: 'note' }, '测试页面，非运行中的 DSH 会话。'))));
 }
@@ -87,7 +87,7 @@ async function run() {
   assert(after.content.includes(titles[0]) && after.content.endsWith('/ ""'), 'visual title or accessible alternative is wrong');
   assert(getComputedStyle(title('weixin')).fontSize === '14px', 'Host typography changed');
   assert(title('weixin').getBoundingClientRect().height === 20, 'row title height changed');
-  await until(() => document.getElementById('search-title').getAttribute(mark) === 'feishu', 'search result is missing its logo');
+  await until(() => document.getElementById('search-title').getAttribute(mark) === 'qq', 'search result is missing its logo');
   assert(document.getElementById('search-title').getBoundingClientRect().width > 100, 'content-sized search title collapsed');
   checks.push('all channel SVGs, original text/node identity, typography, accessibility CSS, Web/chat exclusion, search');
 
@@ -145,9 +145,9 @@ async function run() {
   await until(() => title('weixin').getAttribute(text)?.includes('更新后的标题'), 'React title update was not reflected');
   assert(title('weixin').firstChild === originalNode, 'React had to replace its text node');
   assert(!title('weixin').querySelector('img'), 'title content became HTML');
-  rows = initial.map((row) => row.id === 'weixin' ? { ...row, title: 'Slack · Reused row' } : row);
+  rows = initial.map((row) => row.id === 'weixin' ? { ...row, title: 'QQ · Reused row' } : row);
   render();
-  await until(() => title('weixin').getAttribute(mark) === 'slack', 'reused row retained stale logo');
+  await until(() => title('weixin').getAttribute(mark) === 'qq', 'reused row retained stale logo');
   rows = initial.map((row) => row.id === 'weixin' ? { ...row, title: '普通更新标题' } : row);
   render();
   await until(() => !title('weixin').hasAttribute(mark), 'unprefixed title stayed hidden');

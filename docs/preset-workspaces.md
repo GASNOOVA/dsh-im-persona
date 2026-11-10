@@ -10,14 +10,14 @@
       name: '@xmanrui/dsh-im'
       config:
         groupByAgentPreset: true
-        feishu:
+        qq:
           groupByAgentPreset: false
 ```
 
 根选项为渠道默认；渠道值可以覆盖它。修改后重启 Host，再在机器人设置中选择明确的 Agent Preset。选择 Preset 时创建或复用分组，已有明确 Preset 的机器人会在下一次创建会话时创建分组。关闭选项不会删除目录或移动会话。
 
 - 仅默认 IM 工作目录（`<DSH_HOME>/im`）参与自动分组。目录为 `presets/<preset-id>`，工作区标题使用 Preset 的展示名称。
-- 跟随 Host 默认时不创建分组。自选机器人目录、`/conv` 会话目录和飞书会话目录隔离优先，不会被分组覆盖。Matrix 的默认目录为自选目录，需显式使用默认 IM 目录才参与。
+- 跟随 Host 默认时不创建分组。自选机器人目录、`/conv` 会话目录和会话目录隔离优先，不会被分组覆盖。
 - 只影响后续新会话；已有会话的历史、绑定和位置保留。支持 `/new` 的渠道可发送 `/new` 后再提问；其他渠道使用其现有新会话操作。
 - `/sessions`、`/session N` 和会话选择菜单使用当前已绑定会话的实际目录，重启或修改 Preset 后也保留旧会话的目录。同一自动分组内切换会话不会修改机器人默认目录或清除其他聊天；`/new` 后会话列表跟随后续新会话使用的 Preset 分组。
 - 相同目录和 Preset 复用同一个分组，不按展示标题合并其他工作区；同名时附加 Preset ID，用户手动重命名后保留名称。
@@ -26,9 +26,9 @@
 
 ## English
 
-This is an opt-in **Host plugin configuration** setting, off by default. In the plugin's `config` (for example in the active profile's `cordis.patch.yml`), set `groupByAgentPreset: true`. The YAML example above enables it globally and disables it for Feishu. Restart the Host after changing configuration; existing settings UI and preset commands continue to select the preset.
+This is an opt-in **Host plugin configuration** setting, off by default. In the plugin's `config` (for example in the active profile's `cordis.patch.yml`), set `groupByAgentPreset: true`. The YAML example above enables it globally and disables it for QQ. Restart the Host after changing configuration; existing settings UI and preset commands continue to select the preset.
 
-Only an explicitly selected preset and the default `<DSH_HOME>/im` directory participate. Selecting a preset creates or reuses `presets/<preset-id>` as a registered Harness workspace, named with the preset's display label. Already-selected presets are grouped on the next new session. Inherited Host defaults, manual bot directories, conversation workspace overrides and Feishu conversation directory isolation take priority.
+Only an explicitly selected preset and the default `<DSH_HOME>/im` directory participate. Selecting a preset creates or reuses `presets/<preset-id>` as a registered Harness workspace, named with the preset's display label. Already-selected presets are grouped on the next new session. Inherited Host defaults, manual bot directories, conversation workspace overrides and conversation directory isolation take priority.
 
 Existing chats, bindings and history stay in place. On supported channels use `/new`, then ask again, to create a new session. Turning the option off neither deletes directories nor moves chats. A renamed group retains its title; unrelated same-name workspaces are never merged.
 
