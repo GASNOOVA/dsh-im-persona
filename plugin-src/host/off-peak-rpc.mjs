@@ -1,4 +1,8 @@
-import { normalizeOffPeakSettings, offPeakStatus } from '../../src/channels/shared/off-peak.mjs';
+import {
+  normalizeExtraHolidays,
+  normalizeOffPeakSettings,
+  offPeakStatus,
+} from '../../src/channels/shared/off-peak.mjs';
 
 export const OFF_PEAK_ENDPOINTS = Object.freeze({
   get: 'settings.off-peak.get',
@@ -6,13 +10,17 @@ export const OFF_PEAK_ENDPOINTS = Object.freeze({
 });
 
 const ENDPOINTS = new Set(Object.values(OFF_PEAK_ENDPOINTS));
+const SET_KEYS = new Set(['enabled', 'extraHolidays']);
 
 export function validOffPeakPayload(endpoint, payload) {
   if (!ENDPOINTS.has(endpoint)) return false;
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return false;
   const keys = Object.keys(payload);
   if (endpoint === OFF_PEAK_ENDPOINTS.set) {
-    return keys.length === 1 && keys[0] === 'enabled' && typeof payload.enabled === 'boolean';
+    if (!keys.includes('enabled')) return false;
+    if (keys.some((key) => !SET_KEYS.has(key))) return false;
+    return typeof payload.enabled === 'boolean'
+      && (payload.extraHolidays === undefined || normalizeExtraHolidays(payload.extraHolidays) !== null);
   }
   return keys.length === 0;
 }
@@ -37,7 +45,12 @@ export function createOffPeakRpcHandler(store, { now = () => new Date() } = {}) 
       if (endpoint === OFF_PEAK_ENDPOINTS.get) {
         return { ok: true, value: offPeakStatus(await store.get(), now()) };
       }
-      const settings = normalizeOffPeakSettings({ enabled: payload.enabled });
+      // 只更新显式传入的字段，避免「切换开关」覆盖掉用户在文本框里维护的额外节假日。
+      const current = await store.get();
+      const settings = normalizeOffPeakSettings({
+        enabled: payload.enabled,
+        extraHolidays: payload.extraHolidays ?? current?.extraHolidays,
+      });
       return { ok: true, value: offPeakStatus(await store.set(settings), now()) };
     } catch (error) {
       return {

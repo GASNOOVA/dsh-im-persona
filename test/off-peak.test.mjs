@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  DEEPSEEK_OFF_PEAK_WINDOW,
+  BUILTIN_OFF_PEAK_HOLIDAYS,
+  DEEPSEEK_PEAK_WINDOWS,
   isOffPeakAt,
+  isPeakAt,
   normalizeOffPeakSettings,
   offPeakStatus,
   shouldBlockInbound,
@@ -16,45 +18,82 @@ import { createOffPeakRpcHandler, OFF_PEAK_ENDPOINTS } from '../plugin-src/host/
 
 const at = (iso) => new Date(iso);
 const RPC = { get: OFF_PEAK_ENDPOINTS.get, set: OFF_PEAK_ENDPOINTS.set };
+const SCHEDULE = {
+  timezone: 'Asia/Shanghai (UTC+8)',
+  peakWindows: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }],
+  weekdays: '周一至周五',
+  weekendOffPeak: true,
+  holidaysOffPeak: true,
+  holidayDates: [...BUILTIN_OFF_PEAK_HOLIDAYS],
+  extraHolidays: [],
+};
 
-test('DeepSeek off-peak window wraps UTC midnight and excludes peak hours', () => {
-  assert.equal(DEEPSEEK_OFF_PEAK_WINDOW.utcStart, '16:30');
-  assert.equal(DEEPSEEK_OFF_PEAK_WINDOW.utcEnd, '00:30');
-  // Off-peak starts at 16:30 UTC (00:30 Beijing) and ends at 00:30 UTC (08:30 Beijing).
-  assert.equal(isOffPeakAt(at('2026-11-10T16:29:59.000Z')), false);
-  assert.equal(isOffPeakAt(at('2026-11-10T16:30:00.000Z')), true);
-  assert.equal(isOffPeakAt(at('2026-11-10T23:59:59.000Z')), true);
-  assert.equal(isOffPeakAt(at('2026-11-11T00:00:00.000Z')), true);
-  assert.equal(isOffPeakAt(at('2026-11-11T00:29:59.000Z')), true);
-  assert.equal(isOffPeakAt(at('2026-11-11T00:30:00.000Z')), false);
-  assert.equal(isOffPeakAt(at('2026-11-11T12:00:00.000Z')), false);
-  assert.equal(isOffPeakAt(new Date('invalid')), false);
+test('DeepSeek peak hours are 09:00–12:00 and 14:00–18:00 Beijing time on weekdays', () => {
+  assert.deepEqual(DEEPSEEK_PEAK_WINDOWS.map(({ start, end }) => ({ start, end })), [
+    { start: '09:00', end: '12:00' },
+    { start: '14:00', end: '18:00' },
+  ]);
+  // 2026-11-09 is a Monday: 09:00–12:00 Beijing = 01:00–04:00 UTC.
+  assert.equal(isPeakAt(at('2026-11-09T00:59:59.000Z')), false);
+  assert.equal(isPeakAt(at('2026-11-09T01:00:00.000Z')), true);
+  assert.equal(isPeakAt(at('2026-11-09T03:59:59.000Z')), true);
+  assert.equal(isPeakAt(at('2026-11-09T04:00:00.000Z')), false);
+  // 14:00–18:00 Beijing = 06:00–10:00 UTC.
+  assert.equal(isPeakAt(at('2026-11-09T05:59:59.000Z')), false);
+  assert.equal(isPeakAt(at('2026-11-09T06:00:00.000Z')), true);
+  assert.equal(isPeakAt(at('2026-11-09T09:59:59.000Z')), true);
+  assert.equal(isPeakAt(at('2026-11-09T10:00:00.000Z')), false);
+  assert.equal(isPeakAt(at('2026-11-09T18:00:00.000Z')), false);
+  assert.equal(isPeakAt(new Date('invalid')), false);
 });
 
-test('off-peak settings normalize strictly and default to disabled', () => {
-  assert.deepEqual(normalizeOffPeakSettings({ enabled: true }), { enabled: true });
-  assert.deepEqual(normalizeOffPeakSettings({ enabled: false }), { enabled: false });
-  for (const value of [null, undefined, {}, { enabled: 'yes' }, { enabled: 1 }, [], 'enabled']) {
+test('weekends and Chinese statutory holidays are off-peak all day', () => {
+  // Saturday 2026-11-07 and Sunday 2026-11-08 at 10:00 Beijing.
+  assert.equal(isPeakAt(at('2026-11-07T02:00:00.000Z')), false);
+  assert.equal(isPeakAt(at('2026-11-08T02:00:00.000Z')), false);
+  assert.equal(isOffPeakAt(at('2026-11-07T02:00:00.000Z')), true);
+  // National Day 2026-10-01 (Thursday) 10:00 Beijing.
+  assert.equal(isPeakAt(at('2026-10-01T02:00:00.000Z')), false);
+  assert.equal(isOffPeakAt(at('2026-10-01T02:00:00.000Z')), true);
+  // First working day after the holiday, 2026-10-08 10:00 Beijing, is peak again.
+  assert.equal(isPeakAt(at('2026-10-08T02:00:00.000Z')), true);
+  // Spring Festival 2027-02-08 (Monday) 10:00 Beijing.
+  assert.equal(isPeakAt(at('2027-02-08T02:00:00.000Z')), false);
+  // Make-up work Sunday 2027-02-14 stays off-peak all day.
+  assert.equal(isPeakAt(at('2027-02-14T02:00:00.000Z')), false);
+});
+
+test('off-peak settings normalize strictly and support extra holidays', () => {
+  assert.deepEqual(normalizeOffPeakSettings({ enabled: true }), { enabled: true, extraHolidays: [] });
+  assert.deepEqual(
+    normalizeOffPeakSettings({ enabled: true, extraHolidays: ['2027-12-31', '2027-12-31'] }),
+    { enabled: true, extraHolidays: ['2027-12-31'] },
+  );
+  for (const value of [
+    null, undefined, {}, { enabled: 'yes' }, { enabled: 1 }, [], 'enabled',
+    { enabled: true, extraHolidays: '2027-12-31' },
+    { enabled: true, extraHolidays: ['2027-13-01'] },
+    { enabled: true, extraHolidays: ['not-a-date'] },
+  ]) {
     assert.equal(normalizeOffPeakSettings(value), null);
   }
-  assert.deepEqual(offPeakStatus(undefined, at('2026-11-10T12:00:00.000Z')), {
+  assert.deepEqual(offPeakStatus(undefined, at('2026-11-10T02:00:00.000Z')), {
     enabled: false,
     offPeakNow: false,
     activeNow: true,
-    schedule: {
-      utcStart: '16:30', utcEnd: '00:30', beijingStart: '00:30', beijingEnd: '08:30',
-    },
+    schedule: SCHEDULE,
   });
 });
 
 test('shouldBlockInbound only drops messages while enabled and during peak hours', () => {
-  const peak = at('2026-11-10T12:00:00.000Z');
-  const offPeak = at('2026-11-10T18:00:00.000Z');
+  const peak = at('2026-11-10T02:00:00.000Z'); // Tuesday 10:00 Beijing
+  const offPeak = at('2026-11-10T10:00:00.000Z'); // Tuesday 18:00 Beijing
   assert.equal(shouldBlockInbound({ enabled: false }, peak), false);
   assert.equal(shouldBlockInbound({ enabled: false }, offPeak), false);
   assert.equal(shouldBlockInbound({ enabled: true }, peak), true);
   assert.equal(shouldBlockInbound({ enabled: true }, offPeak), false);
   assert.equal(shouldBlockInbound({ enabled: 'yes' }, peak), false);
+  assert.equal(shouldBlockInbound({ enabled: true, extraHolidays: ['2026-11-10'] }, peak), false);
 });
 
 test('off-peak store persists a versioned document and keeps fail-open defaults', async (t) => {
@@ -63,36 +102,40 @@ test('off-peak store persists a versioned document and keeps fail-open defaults'
   const path = join(dshHome, 'integrations', 'dsh-im', 'off-peak-settings.json');
   const store = new OffPeakSettingsStore(path);
 
-  assert.deepEqual(await store.get(), { enabled: false });
-  assert.equal(store.shouldBlockInbound(at('2026-11-10T12:00:00.000Z')), false);
+  assert.deepEqual(await store.get(), { enabled: false, extraHolidays: [] });
+  assert.equal(store.shouldBlockInbound(at('2026-11-10T02:00:00.000Z')), false);
   await store.set({ enabled: true });
   const document = JSON.parse(await readFile(path, 'utf8'));
-  assert.deepEqual(document, { version: 1, offPeak: { enabled: true } });
-  assert.equal(store.shouldBlockInbound(at('2026-11-10T12:00:00.000Z')), true);
-  assert.equal(store.shouldBlockInbound(at('2026-11-10T18:00:00.000Z')), false);
+  assert.deepEqual(document, { version: 1, offPeak: { enabled: true, extraHolidays: [] } });
+  assert.equal(store.shouldBlockInbound(at('2026-11-10T02:00:00.000Z')), true);
+  assert.equal(store.shouldBlockInbound(at('2026-11-10T10:00:00.000Z')), false);
 
   const reloaded = new OffPeakSettingsStore(path);
-  assert.deepEqual(await reloaded.get(), { enabled: true });
+  assert.deepEqual(await reloaded.get(), { enabled: true, extraHolidays: [] });
 
   await assert.rejects(store.set({ enabled: 'yes' }), TypeError);
 
   await writeFile(path, '{ not json', 'utf8');
   const broken = new OffPeakSettingsStore(path);
   await assert.rejects(broken.get(), SyntaxError);
-  assert.equal(broken.shouldBlockInbound(at('2026-11-10T12:00:00.000Z')), false);
+  assert.equal(broken.shouldBlockInbound(at('2026-11-10T02:00:00.000Z')), false);
   // Saving repairs a corrupt document instead of leaving the settings page stuck.
-  assert.deepEqual(await broken.set({ enabled: true }), { enabled: true });
-  assert.deepEqual(await broken.get(), { enabled: true });
+  assert.deepEqual(await broken.set({ enabled: true }), { enabled: true, extraHolidays: [] });
+  assert.deepEqual(await broken.get(), { enabled: true, extraHolidays: [] });
 });
 
-test('off-peak RPC reports status, validates toggles, and maps cancellations', async () => {
-  const settings = { enabled: false };
+test('off-peak RPC reports status, validates payloads, and preserves extra holidays', async () => {
+  const settings = { enabled: false, extraHolidays: ['2027-12-31'] };
   const store = {
-    async get() { return { ...settings }; },
-    async set(value) { Object.assign(settings, value); return { ...settings }; },
+    async get() { return { ...settings, extraHolidays: [...settings.extraHolidays] }; },
+    async set(value) {
+      Object.assign(settings, value);
+      settings.extraHolidays = [...value.extraHolidays];
+      return { ...settings, extraHolidays: [...settings.extraHolidays] };
+    },
     shouldBlockInbound() { return false; },
   };
-  const handler = createOffPeakRpcHandler(store, { now: () => at('2026-11-10T12:00:00.000Z') });
+  const handler = createOffPeakRpcHandler(store, { now: () => at('2026-11-10T02:00:00.000Z') });
 
   const initial = await handler(RPC.get, {});
   assert.equal(initial.ok, true);
@@ -100,22 +143,17 @@ test('off-peak RPC reports status, validates toggles, and maps cancellations', a
     enabled: false,
     offPeakNow: false,
     activeNow: true,
-    schedule: {
-      utcStart: '16:30', utcEnd: '00:30', beijingStart: '00:30', beijingEnd: '08:30',
-    },
+    schedule: { ...SCHEDULE, holidayDates: [...BUILTIN_OFF_PEAK_HOLIDAYS, '2027-12-31'], extraHolidays: ['2027-12-31'] },
   });
-  assert.deepEqual(await handler(RPC.set, { enabled: true }), {
-    ok: true,
-    value: {
-      enabled: true,
-      offPeakNow: false,
-      activeNow: false,
-      schedule: {
-        utcStart: '16:30', utcEnd: '00:30', beijingStart: '00:30', beijingEnd: '08:30',
-      },
-    },
-  });
+  const saved = await handler(RPC.set, { enabled: true });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.value.enabled, true);
+  assert.equal(saved.value.activeNow, false);
+  assert.deepEqual(saved.value.schedule.extraHolidays, ['2027-12-31']);
+  const added = await handler(RPC.set, { enabled: true, extraHolidays: ['2028-01-01'] });
+  assert.deepEqual(added.value.schedule.extraHolidays, ['2028-01-01']);
   assert.equal((await handler(RPC.set, { enabled: 'yes' })).error.code, 'bad-request');
+  assert.equal((await handler(RPC.set, { enabled: true, extraHolidays: ['bad'] })).error.code, 'bad-request');
   assert.equal((await handler(RPC.get, { extra: true })).error.code, 'bad-request');
   assert.equal((await handler('settings.off-peak.unknown', {})).error.code, 'bad-request');
   const controller = new AbortController();

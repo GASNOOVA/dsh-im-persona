@@ -1,6 +1,6 @@
 {
   "name": "dsh-im-persona",
-  "version": "5.10.0-personal.6",
+  "version": "5.10.0-personal.7",
   "icon": "./assets/logo-plugin-message-link-gradient.webp",
   "description": "个人定制版 IM 机器人：把微信与 QQ 接入 DeepSeek Harness，支持为每个机器人配置角色人设（基于 @xmanrui/dsh-im 5.10.0 独立改造）。Personal-edition IM bot for DSH: WeChat and QQ only, with per-bot persona.",
   "keywords": [

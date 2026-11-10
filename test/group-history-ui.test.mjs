@@ -27,7 +27,13 @@ test('general and attachment panels display translated management failures witho
                 offPeakNow: false,
                 activeNow: true,
                 schedule: {
-                  utcStart: '16:30', utcEnd: '00:30', beijingStart: '00:30', beijingEnd: '08:30',
+                  timezone: 'Asia/Shanghai (UTC+8)',
+                  peakWindows: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }],
+                  weekdays: '周一至周五',
+                  weekendOffPeak: true,
+                  holidaysOffPeak: true,
+                  holidayDates: [],
+                  extraHolidays: [],
                 },
               },
             };
@@ -82,7 +88,13 @@ test('General tab configures sidebar and retention and retains Attachments navig
           offPeakNow: false,
           activeNow: true,
           schedule: {
-            utcStart: '16:30', utcEnd: '00:30', beijingStart: '00:30', beijingEnd: '08:30',
+            timezone: 'Asia/Shanghai (UTC+8)',
+            peakWindows: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }],
+            weekdays: '周一至周五',
+            weekendOffPeak: true,
+            holidaysOffPeak: true,
+            holidayDates: [],
+            extraHolidays: [],
           },
         },
       };
