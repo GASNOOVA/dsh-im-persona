@@ -522,3 +522,60 @@ test('waits for the configured merge window before replying to a follow-up', asy
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('an image message is downloaded and passed to the model as an image input', async () => {
+  const messages = [{
+    id: 'msg-img',
+    threadId: GROUP_ID,
+    direction: 'incoming',
+    type: 3,
+    senderId: SENDER_ID,
+    body: null,
+    createdAt: '2026-11-10T14:57:22+00:00',
+    mentions: { self: true, userIds: [OWN_ID] },
+  }];
+  const client = fakeClient({
+    messages,
+    threads: [{ id: GROUP_ID, displayName: '👫', kind: 'group', avatarMembers: [{ id: SENDER_ID, displayName: 'Zach' }] }],
+    members: [{ id: SENDER_ID, displayName: 'Zach' }, { id: OWN_ID, displayName: '大肥鱼版' }],
+  });
+  const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const downloads = [];
+  client.downloadMessageImage = async (messageId) => {
+    downloads.push(messageId);
+    return { name: 'photo.png', bytes: imageBytes, mediaType: 'image/png' };
+  };
+  client.events = [{ cursor: '8', kind: 'message.committed', payload: { messageId: 'msg-img', direction: 'incoming' } }];
+  const prompts = [];
+  const generations = [];
+  const home = await mkdtemp(join(tmpdir(), 'wp-bridge-img-'));
+  const bridge = new WechatPersonalGroupBridge({
+    client,
+    brain: fakeBrain({ direct: true }),
+    generate: async (request) => {
+      generations.push(request);
+      prompts.push(request.prompt);
+      return '看到图啦。';
+    },
+    resolvePersona: async () => ({ enabled: true, name: '大肥鱼（群聊版）', text: '你是大肥鱼。' }),
+    accountId: 'xiaohao',
+    ownUserId: OWN_ID,
+    statePath: join(home, 'cursor.json'),
+    mergeWindowMs: 5,
+    logger: { warn() {}, info() {}, error() {} },
+  });
+  try {
+    await bridge.start();
+    await waitFor(() => client.sent.length === 1, 'image reply should be sent');
+    assert.deepEqual(downloads, ['msg-img']);
+    assert.equal(generations.length, 1);
+    assert.equal(generations[0].images.length, 1);
+    assert.equal(generations[0].images[0].name, 'photo.png');
+    assert.match(prompts[0], /\[图片\]/u);
+    assert.match(prompts[0], /对方还发送了一张图片/u);
+    assert.equal(client.sent[0].text, '看到图啦。');
+  } finally {
+    await bridge.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});

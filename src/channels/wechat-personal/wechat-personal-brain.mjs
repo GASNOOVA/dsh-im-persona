@@ -3,7 +3,7 @@
 // 设计原则：
 // - 群聊大脑（GroupBrain）负责记录、记忆整理、成员画像与自动接话时机；
 // - 本桥只做「事件 → observe」与「@ 直通回复 / 自动接话发送」两件事；
-// - 只处理文本消息（type 1）；图片/文件/语音等留给后续迭代；
+// - 文本消息进入群脑；图片消息会先经 daemon 下载附件，作为图片输入交给模型；
 // - 游标持久化到私有 JSON 文件，断线重连从上一个 cursor 续传，避免漏消息或重复处理。
 
 import { randomUUID } from 'node:crypto';
@@ -319,8 +319,24 @@ export class WechatPersonalGroupBridge {
 
   async #handleGroupMessage(message) {
     const chatId = message.threadId;
-    const text = textOf(message.body);
-    if (!text) return; // 图片/文件等非文本消息暂不进入群脑，避免空文本破坏画像。
+    let text = textOf(message.body);
+    let images = [];
+    if (!text && Number(message.type) === 3) {
+      try {
+        const image = await this.#client.downloadMessageImage?.(message.id);
+        if (image?.bytes?.byteLength) {
+          images = [{
+            name: image.name,
+            size: image.bytes.byteLength,
+            load: async () => image.bytes,
+          }];
+          text = '[图片]';
+        }
+      } catch (error) {
+        this.#logger.warn?.('[dsh-im:wechat-personal] unable to download image:', error?.message ?? error);
+      }
+    }
+    if (!text) return; // 文件/语音等非文本消息暂不进入群脑。
     const group = await this.#groupInfo(chatId);
     const addressed = message.mentions?.self === true
       || (Array.isArray(message.mentions?.userIds) && message.mentions.userIds.includes(this.#ownUserId));
@@ -336,6 +352,7 @@ export class WechatPersonalGroupBridge {
       mentionedBot: addressed,
       at: Number.isFinite(Date.parse(message.createdAt ?? '')) ? Date.parse(message.createdAt) : this.#now(),
       kind: 'group',
+      ...(images.length > 0 ? { images } : {}),
     };
     let observed;
     try {
@@ -408,7 +425,11 @@ export class WechatPersonalGroupBridge {
     }
     const sameSender = queue.jobs.find((entry) => entry.kind === 'follow-up' && this.#senderKeyOf(entry) === senderKey);
     if (sameSender) {
-      sameSender.event = { ...job.event, text: `${sameSender.event.text}\n${job.event.text}` };
+      sameSender.event = {
+        ...job.event,
+        text: `${sameSender.event.text}\n${job.event.text}`,
+        images: [...(sameSender.event.images ?? []), ...(job.event.images ?? [])],
+      };
       sameSender.message = job.message;
       sameSender.merged = (sameSender.merged ?? 1) + 1;
     } else {
@@ -495,10 +516,18 @@ export class WechatPersonalGroupBridge {
       if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
       sections.push(`群成员 ${event.senderName} 刚刚 @ 你：\n${event.text}`);
+      if (Array.isArray(event.images) && event.images.length > 0) {
+        sections.push('（对方还发送了一张图片，请结合图片内容回复。）');
+      }
       if (blocks.length > 0) sections.push(...blocks);
       sections.push('请用纯文本直接回复（不要使用 Markdown 标记，不要输出解释过程）；回复要像群友聊天，简洁自然。');
       const prompt = sections.join('\n\n');
-      const raw = await this.#generate({ kind: 'direct', prompt, meta: { chatId: event.chatId, senderId: event.senderId, channel: 'wechat-personal' } });
+      const raw = await this.#generate({
+        kind: 'direct',
+        prompt,
+        images: event.images ?? [],
+        meta: { chatId: event.chatId, senderId: event.senderId, channel: 'wechat-personal' },
+      });
       const text = textOf(raw);
       if (!text || text === SKIP_TOKEN || text.startsWith(SKIP_TOKEN)) return;
       const reply = text.slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
@@ -524,11 +553,15 @@ export class WechatPersonalGroupBridge {
       if (persona?.text) sections.push(`<dsh_im_persona>\n${persona.text}\n</dsh_im_persona>`);
       if (transcript) sections.push(`群「${event.groupName || event.chatId}」最近聊天：\n${transcript}`);
       sections.push(`群成员 ${event.senderName} 刚刚说：\n${event.text}`);
+      if (Array.isArray(event.images) && event.images.length > 0) {
+        sections.push('（对方还发送了一张图片，请结合图片内容回复。）');
+      }
       sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'follow-up',
         prompt,
+        images: event.images ?? [],
         meta: { chatId: event.chatId, senderId: event.senderId, channel: 'wechat-personal' },
       });
       const text = textOf(raw);
@@ -568,8 +601,11 @@ export class WechatPersonalGroupBridge {
     try {
       const messages = await this.#client.listMessages(chatId, { limit: limit + 1 });
       const lines = messages
-        .filter((message) => message && message.id !== currentMessageId && textOf(message.body))
+        .filter((message) => message && message.id !== currentMessageId
+          && (textOf(message.body) || Number(message.type) === 3))
         .slice(0, limit)
+        .map((message) => (Number(message.type) === 3 && !textOf(message.body)
+          ? { ...message, body: '[图片]' } : message))
         .reverse()
         .map((message) => formatTranscriptLine(message, (senderId) => this.#groupCache.get(chatId)?.members.get(senderId) ?? textOf(senderId)));
       if (lines.length === 0) return '';

@@ -338,7 +338,7 @@ export function GroupBrainSettings({ rpcCall }) {
             onChange: (value) => patch({ ambient: { ...draft.ambient, cooldownMs: fromMinutes(value) } }),
           }),
           h(NumberField, {
-            id: `${id}-follow-up`, label: '连续对话窗口', unit: '秒', value: seconds(draft.ambient.followUpMs), min: 0, max: 600,
+            id: `${id}-follow-up`, label: '连续对话窗口', unit: '秒', value: seconds(draft.ambient.followUpMs), min: 0, max: 1800,
             help: '被 @ 后这段时间内，未 @ 的群消息也会自然接话；0 表示关闭。', disabled,
             onChange: (value) => patch({ ambient: { ...draft.ambient, followUpMs: milliseconds(value) } }),
           }),

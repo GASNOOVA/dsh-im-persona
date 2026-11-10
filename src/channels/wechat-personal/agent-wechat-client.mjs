@@ -197,6 +197,126 @@ export class AgentWechatClient {
     return Array.isArray(body?.items) ? body.items : [];
   }
 
+  /** 列出某条消息的附件（图片/文件/语音等）。 */
+  async listMessageMedia(messageId, { signal } = {}) {
+    const body = await this.#request(
+      'GET',
+      `/v1/accounts/${encode(this.#accountId)}/messages/${encode(messageId)}/media`,
+      { signal },
+    );
+    return Array.isArray(body?.items) ? body.items : [];
+  }
+
+  /** 请求 daemon 下载某条消息的附件；返回异步 job。 */
+  async startMediaTransfer(messageId, { assetId = null, quality = 'best', signal } = {}) {
+    const body = await this.#request(
+      'POST',
+      `/v1/accounts/${encode(this.#accountId)}/messages/${encode(messageId)}/media-transfers`,
+      { signal, body: { messageId, assetId, quality } },
+    );
+    return body?.job ?? body ?? null;
+  }
+
+  /** 查询附件下载/上传任务。 */
+  async getJob(jobId, { signal } = {}) {
+    const body = await this.#request('GET', `/v1/accounts/${encode(this.#accountId)}/jobs/${encode(jobId)}`, { signal });
+    return body?.job ?? body ?? null;
+  }
+
+  async #requestBytes(path, { signal, maxBytes = 20 * 1024 * 1024 } = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('agent-wechat media request timed out')), this.#timeoutMs);
+    timer.unref?.();
+    const onAbort = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      const response = await this.#fetch(`${this.#baseUrl}${path}`, {
+        headers: this.#headers({ Accept: '*/*' }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new AgentWechatError(`agent-wechat media request failed (${response.status})`, { status: response.status });
+      }
+      const declared = Number(response.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        throw new AgentWechatError('agent-wechat media is too large', { code: 'media-too-large' });
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > maxBytes) {
+        throw new AgentWechatError('agent-wechat media is too large', { code: 'media-too-large' });
+      }
+      return { bytes, contentType: response.headers.get('content-type') ?? 'application/octet-stream' };
+    } catch (error) {
+      if (error instanceof AgentWechatError) throw error;
+      if (controller.signal.aborted) {
+        throw new AgentWechatError('agent-wechat media request was cancelled or timed out', { code: 'timeout' });
+      }
+      throw new AgentWechatError(`agent-wechat media request failed: ${error?.message ?? error}`, { code: 'network' });
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /**
+   * 下载某条消息中的第一张图片。
+   * 流程：列附件 → 必要时请求下载并轮询 job → 读取 /media/{assetId}/content。
+   * 返回 { assetId, messageId, name, mediaType, bytes }，供 Harness 的 images 入参使用。
+   */
+  async downloadMessageImage(messageId, {
+    quality = 'best',
+    signal,
+    maxBytes = 20 * 1024 * 1024,
+    waitMs = 30_000,
+    pollMs = 400,
+  } = {}) {
+    const isImage = (asset) => (typeof asset?.kind === 'string'
+      ? asset.kind === 'image'
+      : /^image\//i.test(String(asset?.contentType ?? '')));
+    let assets = await this.listMessageMedia(messageId, { signal });
+    let asset = assets.find(isImage);
+    if (!asset) throw new AgentWechatError('message has no image attachment', { code: 'media-not-found' });
+    if (asset.state !== 'available') {
+      const job = await this.startMediaTransfer(messageId, { assetId: asset.id, quality, signal });
+      const jobId = typeof job?.id === 'string' ? job.id : '';
+      if (!jobId) throw new AgentWechatError('agent-wechat did not return a media job', { code: 'media-transfer-failed' });
+      const deadline = Date.now() + Math.max(1_000, waitMs);
+      for (;;) {
+        const current = await this.getJob(jobId, { signal });
+        const state = typeof current?.state === 'string' ? current.state : '';
+        if (state === 'available') break;
+        if (['failed', 'expired', 'unsupported', 'cancelled', 'needs_review'].includes(state)) {
+          throw new AgentWechatError(`agent-wechat media download ${state}`, { code: 'media-transfer-failed', body: current });
+        }
+        if (Date.now() >= deadline) {
+          throw new AgentWechatError('agent-wechat media download timed out', { code: 'timeout' });
+        }
+        await new Promise((resolve) => {
+          if (signal?.aborted) return resolve();
+          const timer = setTimeout(resolve, pollMs);
+          timer.unref?.();
+          signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+        });
+        signal?.throwIfAborted?.();
+      }
+      assets = await this.listMessageMedia(messageId, { signal });
+      asset = assets.find((item) => item.id === asset.id) ?? asset;
+    }
+    const content = await this.#requestBytes(
+      `/v1/accounts/${encode(this.#accountId)}/media/${encode(asset.id)}/content`,
+      { signal, maxBytes },
+    );
+    return {
+      assetId: asset.id,
+      messageId,
+      name: typeof asset.fileName === 'string' && asset.fileName
+        ? asset.fileName
+        : (typeof asset.name === 'string' && asset.name ? asset.name : `${asset.id}.jpg`),
+      mediaType: content.contentType,
+      bytes: content.bytes,
+    };
+  }
+
   /** 发送文本；群聊可带 mentions.userIds / mentions.all。 */
   async sendText({ threadId, text, mentions, idempotencyKey, signal, kind = 'text' } = {}) {
     if (typeof threadId !== 'string' || !threadId) throw new TypeError('threadId is required');

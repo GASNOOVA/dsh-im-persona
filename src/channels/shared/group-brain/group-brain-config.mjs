@@ -67,7 +67,7 @@ export const GROUP_BRAIN_LIMITS = Object.freeze({
   cooldownMs: Object.freeze([60_000, 86_400_000]),
   maxPerHour: Object.freeze([1, 30]),
   maxPerDay: Object.freeze([1, 300]),
-  followUpMs: Object.freeze([0, 600_000]),
+  followUpMs: Object.freeze([0, 1_800_000]),
   followUpMaxReplies: Object.freeze([0, 100]),
   followUpMinIntervalMs: Object.freeze([0, 300_000]),
   mergeWindowMs: Object.freeze([0, 120_000]),

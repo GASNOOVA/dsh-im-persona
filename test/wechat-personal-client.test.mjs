@@ -115,3 +115,56 @@ test('streamEvents parses SSE frames and yields normalized events', async () => 
   assert.deepEqual(seen[0].payload, { messageId: 'msg-1', direction: 'incoming' });
   assert.equal(seen[1].kind, 'send.updated');
 });
+
+test('downloadMessageImage fetches an attachment through the media APIs', async () => {
+  let mediaListCalls = 0;
+  const { client, calls } = clientWith((url, options) => {
+    if (url.endsWith('/messages/msg-img/media')) {
+      mediaListCalls += 1;
+      return jsonResponse({
+        items: [{
+          id: 'asset-1',
+          kind: 'image',
+          state: mediaListCalls === 1 ? 'pending' : 'available',
+          contentType: mediaListCalls === 1 ? null : 'image/jpeg',
+          fileName: 'photo.jpg',
+        }],
+      });
+    }
+    if (url.endsWith('/messages/msg-img/media-transfers')) {
+      assert.equal(options.method, 'POST');
+      return jsonResponse({ job: { id: 'job-1', state: 'running' } });
+    }
+    if (url.endsWith('/jobs/job-1')) {
+      return jsonResponse({ job: { id: 'job-1', state: 'available' } });
+    }
+    if (url.endsWith('/media/asset-1/content')) {
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0x01]), {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': '4' },
+      });
+    }
+    throw new Error(`unexpected URL ${url}`);
+  });
+  const image = await client.downloadMessageImage('msg-img');
+  assert.equal(image.name, 'photo.jpg');
+  assert.equal(image.mediaType, 'image/jpeg');
+  assert.equal(image.bytes.byteLength, 4);
+  assert.equal(mediaListCalls, 2);
+  const transferCall = calls.find((call) => call.url.endsWith('/media-transfers'));
+  assert.equal(JSON.parse(transferCall.options.body).assetId, 'asset-1');
+  const contentCall = calls.find((call) => call.url.endsWith('/media/asset-1/content'));
+  assert.match(contentCall.options.headers.Authorization, /^Bearer /u);
+});
+
+test('downloadMessageImage rejects messages without an image attachment', async () => {
+  const { client } = clientWith((url) => {
+    if (url.endsWith('/messages/msg-text/media')) return jsonResponse({ items: [] });
+    throw new Error(`unexpected URL ${url}`);
+  });
+  await assert.rejects(() => client.downloadMessageImage('msg-text'), (error) => {
+    assert.ok(error instanceof AgentWechatError);
+    assert.equal(error.code, 'media-not-found');
+    return true;
+  });
+});

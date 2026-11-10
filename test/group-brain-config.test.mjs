@@ -29,7 +29,7 @@ test('group brain settings normalize unknown input to conservative defaults', ()
       cooldownMs: -1,
       maxPerHour: 999,
       maxPerDay: 2,
-      followUpMs: 999_999,
+      followUpMs: 9_999_999,
       followUpMaxReplies: -1,
       followUpMinIntervalMs: 1.5,
     },

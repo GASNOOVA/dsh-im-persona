@@ -52,11 +52,12 @@ export function isMissingSessionError(error) {
   return /session/i.test(message) && /(not found|unknown|does not exist|no such|已不存在)/i.test(message);
 }
 
-async function askSession(harness, sessionId, prompt, timeoutMs) {
+async function askSession(harness, sessionId, prompt, timeoutMs, images = []) {
   return harness.ask(sessionId, prompt, {
     timeoutMs,
     progressMode: 'latest',
     finalAnswerOnly: true,
+    ...(Array.isArray(images) && images.length > 0 ? { images } : {}),
   });
 }
 
@@ -102,7 +103,7 @@ export function createHarnessGroupBrainGenerator({
     });
   }
 
-  async function generatePersistent({ prompt, meta, chatId }) {
+  async function generatePersistent({ prompt, meta, chatId, images }) {
     const groupName = meta?.groupName;
     const key = groupBrainSessionKey(channel, botId, chatId);
     const existing = await sessions.get(key).catch(() => null);
@@ -114,7 +115,7 @@ export function createHarnessGroupBrainGenerator({
       await renamePersistentSession(sessionId, groupName);
     }
     try {
-      return await askSession(harness, sessionId, prompt, timeoutMs);
+      return await askSession(harness, sessionId, prompt, timeoutMs, images);
     } catch (error) {
       if (!isMissingSessionError(error)) throw error;
       logger.warn?.('[dsh-im] group brain session is gone, recreating:', error?.message ?? error);
@@ -122,7 +123,7 @@ export function createHarnessGroupBrainGenerator({
       sessionId = await harness.createSession();
       needsRecord = true;
       await renamePersistentSession(sessionId, groupName);
-      return askSession(harness, sessionId, prompt, timeoutMs);
+      return askSession(harness, sessionId, prompt, timeoutMs, images);
     } finally {
       if (needsRecord) {
         await sessions.set(key, {
@@ -138,7 +139,7 @@ export function createHarnessGroupBrainGenerator({
     }
   }
 
-  async function generateEphemeral({ kind, prompt, meta }) {
+  async function generateEphemeral({ kind, prompt, meta, images }) {
     const sessionId = await harness.createSession();
     try {
       if (typeof harness.renameSession === 'function') {
@@ -146,7 +147,7 @@ export function createHarnessGroupBrainGenerator({
           logger.warn?.('[dsh-im] group brain session rename failed:', error?.message ?? error);
         });
       }
-      return await askSession(harness, sessionId, prompt, timeoutMs);
+      return await askSession(harness, sessionId, prompt, timeoutMs, images);
     } finally {
       if (typeof harness.archiveWorkspaceSession === 'function') {
         await harness.archiveWorkspaceSession(sessionId, { timeoutMs: 15_000 }).catch((error) => {
@@ -156,13 +157,13 @@ export function createHarnessGroupBrainGenerator({
     }
   }
 
-  return async function generate({ kind, prompt, meta = {} } = {}) {
+  return async function generate({ kind, prompt, meta = {}, images = [] } = {}) {
     if (typeof prompt !== 'string' || !prompt.trim()) throw new TypeError('group brain prompt is required');
     const chatId = typeof meta?.chatId === 'string' ? meta.chatId : '';
     if (canReuseSession && kind !== 'consolidate' && chatId) {
-      return generatePersistent({ prompt, meta, chatId });
+      return generatePersistent({ prompt, meta, chatId, images });
     }
-    return generateEphemeral({ kind, prompt, meta });
+    return generateEphemeral({ kind, prompt, meta, images });
   };
 }
 
