@@ -182,6 +182,10 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       harness: await createHarness(),
       logger,
       timeoutMs: internals.timeoutMs ?? 180_000,
+      // 同一群的所有回复复用同一个 DSH 会话（统一群聊上下文）。
+      channel: 'wechat-personal',
+      botId: settings.accountId,
+      dshHome: config.dshHome,
     });
     const generate = async (request) => {
       let blocked = false;
