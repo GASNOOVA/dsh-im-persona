@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# song2cute wrapper — run the pipeline with the server venv.
+# Runtime directory defaults to ~/feiyu-voice-lite; override with SONG2CUTE_HOME.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="${SONG2CUTE_HOME:-$HOME/feiyu-voice-lite}"
+exec "$ROOT/.venv/bin/python" "$HERE/song2cute.py" "$@"

@@ -15,3 +15,7 @@ restart-host.log
 
 # personal edition: lib/ is a build artifact (npm run build), not committed
 lib/
+
+# Python tool caches
+__pycache__/
+*.pyc

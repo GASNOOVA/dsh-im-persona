@@ -148,6 +148,7 @@ dsh plugin --profile web remove dsh-im-persona
 - **群聊版人设**：内置「大肥鱼（群聊版）」独立人设，与私聊版分开；选中私聊版时群聊回复会自动叠加群聊行为准则。
 - **会话目录隔离**：为不同会话自动建立独立目录。见 [会话目录隔离](docs/会话目录隔离.md)。
 - **Agent Preset 分组**：选择 Preset 后按 Preset 建立工作区分组。见 [preset-workspaces](docs/preset-workspaces.md)。
+- **GPU 声音工具（配套）**：`tools/song2cute` 用 Demucs + FeiyuVoice-RVC 把任意歌曲的人声换成大肥鱼 cute 音色（保留原唱旋律）并混音；可迁移的 GPU 服务安装指南见 [GPU 声音服务部署](docs/GPU声音服务部署.md)（song2cute、GPT-SoVITS 实验、官方 feiyu 语音服务）。
 - **界面语言**：设置页与机器人消息跟随 DSH 语言（中文/English/Русский），中文兜底。
 
 ## 8. 开发与验证
@@ -167,6 +168,7 @@ src/channels/{weixin,qq,wechat-personal,shared}   # 渠道协议/运行时 + 群
 plugin-src/host/                  # Host 外壳：渠道装配、RPC、注入器
 plugin-src/client/                # Web 客户端：设置页、渠道卡片、人设页签
 test/                             # 单测
+tools/song2cute/                  # GPU 歌曲换声/翻唱工具（Demucs + FeiyuVoice-RVC）
 docs/                             # 使用文档；docs/改造/ 为本次改造记录
 ```
 
