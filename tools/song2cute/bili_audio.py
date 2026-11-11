@@ -220,6 +220,12 @@ def extract(
             "retries": 3,
             "fragment_retries": 3,
             "socket_timeout": 30,
+            # B 站对部分视频的 CDN 返回 567：带上来源页与桌面 UA 可显著降低风控概率。
+            "referer": "https://www.bilibili.com/",
+            "http_headers": {
+                "Referer": "https://www.bilibili.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            },
         }
         if ffmpeg:
             ydl_opts["ffmpeg_location"] = ffmpeg

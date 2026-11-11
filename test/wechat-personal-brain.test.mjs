@@ -38,6 +38,8 @@ function fakeClient({ messages = [], threads = [], members = [], latestCursor = 
     },
     voices: [],
     sendVoice: async (payload) => { client.voices.push(payload); return { id: `voice-${client.voices.length}`, state: 'accepted' }; },
+    files: [],
+    sendFile: async (payload) => { client.files.push(payload); return { id: `file-${client.files.length}`, state: 'accepted' }; },
     listThreads: async () => threads,
     listMembers: async () => members,
     listMessages: async () => messages,
@@ -750,6 +752,98 @@ test('when voice synthesis fails the voice text falls back to a normal message',
       await waitFor(() => client.sent.length === 1, 'fallback text should be sent');
       assert.equal(client.voices.length, 0);
       assert.equal(client.sent[0].text, '大家好，我是大肥鱼。');
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('always voice mode turns every plain reply into a voice note', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-voice-always-'));
+  try {
+    const messages = [
+      { id: 'msg-always', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 在吗', createdAt: '2026-11-10T06:03:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-always', direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
+    const synthesized = [];
+    const brain = fakeBrain();
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain,
+      generate: async () => '在的在的，今天想聊点什么？',
+      resolvePersona: async () => null,
+      voice: {
+        mode: 'always',
+        synthesize: async (text) => { synthesized.push(text); return new Uint8Array([1, 2, 3]); },
+        maxChars: 300,
+        style: 'cute',
+      },
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.voices.length === 1, 'voice note should be sent in always mode');
+      assert.deepEqual(synthesized, ['在的在的，今天想聊点什么？']);
+      assert.equal(client.sent.length, 0);
+      assert.ok(brain.observed.some((event) => event.kind === 'bot' && event.text.includes('[语音] 在的在的')));
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a quoted cover command downloads the Bilibili video and sends the cover file', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-cover-'));
+  try {
+    const coverText = '翻唱 https://www.bilibili.com/video/BV1xx411c7mD 温柔一点';
+    const messages = [
+      { id: 'msg-cover', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: coverText, quote: { direction: 'outgoing', senderId: OWN_ID, serverId: '1' }, createdAt: '2026-11-10T06:05:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-cover', direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
+    const requests = [];
+    const cover = {
+      maxPromptChars: 300,
+      client: {
+        fetchCover: async (request) => {
+          requests.push(request);
+          return { bytes: new Uint8Array([1, 2, 3]), format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD' };
+        },
+      },
+    };
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '不应调用模型',
+      resolvePersona: async () => null,
+      cover,
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.files.length === 1, 'cover file should be sent');
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].url, 'https://www.bilibili.com/video/BV1xx411c7mD');
+      assert.equal(requests[0].mix, false);
+      assert.match(requests[0].prompt, /温柔一点/u);
+      assert.equal(client.uploads.length, 1);
+      assert.equal(client.uploads[0].mediaType, 'audio/mpeg');
+      assert.deepEqual(client.files[0], { threadId: GROUP_ID, sourceId: 'upload-1' });
+      await waitFor(() => client.sent.length >= 1, 'ack text should be sent');
+      assert.ok(client.sent.some((item) => item.text.includes('翻唱')));
     } finally {
       await bridge.stop();
     }

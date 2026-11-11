@@ -58,7 +58,7 @@ test('group brain settings load, toggle and save through RPC', async (t) => {
   await flush();
 
   const switches = switchInputs(renderer);
-  assert.equal(switches.length, 5);
+  assert.equal(switches.length, 6);
   assert.equal(switches[0].props.checked, true);
 
   await act(async () => { switches[0].props.onChange({ target: { checked: false } }); });
@@ -96,5 +96,5 @@ test('group brain settings show a retry path when loading fails', async (t) => {
   assert.ok(retryButton, 'retry button is rendered');
   await act(async () => { retryButton.props.onClick(); });
   await flush();
-  assert.equal(switchInputs(renderer).length, 5);
+  assert.equal(switchInputs(renderer).length, 6);
 });

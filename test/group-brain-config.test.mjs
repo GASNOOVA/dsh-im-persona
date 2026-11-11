@@ -150,6 +150,7 @@ test('normalizeWechatPersonalSettings adds voice defaults and normalizes voice f
   });
   assert.deepEqual(normalized.voice, {
     enabled: true,
+    mode: 'tag',
     serviceUrl: 'http://127.0.0.1:9880',
     apiKeyPath: '/tmp/key.txt',
     style: 'gentle',
@@ -162,4 +163,28 @@ test('normalizeWechatPersonalSettings adds voice defaults and normalizes voice f
   assert.equal(fallback.voice.maxChars, 300);
   assert.equal(fallback.voice.timeoutMs, 120_000);
   assert.equal(fallback.voice.serviceUrl, 'http://127.0.0.1:9880');
+});
+
+test('normalizeWechatPersonalSettings normalizes the cover service settings', () => {
+  const normalized = normalizeWechatPersonalSettings({
+    voice: { mode: 'always' },
+    cover: {
+      enabled: true,
+      serviceUrl: 'http://127.0.0.1:9860/',
+      apiKeyPath: '/tmp/cover-key',
+      maxPromptChars: 120,
+    },
+  });
+  assert.equal(normalized.voice.mode, 'always');
+  assert.deepEqual(normalized.cover, {
+    enabled: true,
+    serviceUrl: 'http://127.0.0.1:9860',
+    apiKeyPath: '/tmp/cover-key',
+    maxPromptChars: 120,
+  });
+  const fallback = normalizeWechatPersonalSettings({ voice: { mode: 'unknown' }, cover: { serviceUrl: 'ftp://x', maxPromptChars: 1 } });
+  assert.equal(fallback.voice.mode, 'tag');
+  assert.equal(fallback.cover.enabled, false);
+  assert.equal(fallback.cover.serviceUrl, '');
+  assert.equal(fallback.cover.maxPromptChars, 300);
 });

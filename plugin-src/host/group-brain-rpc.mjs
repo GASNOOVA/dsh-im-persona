@@ -10,6 +10,7 @@ import {
   getGroupBrainSettingsStore,
   normalizeGroupBrainSettings,
 } from '../../src/channels/shared/group-brain/group-brain-config.mjs';
+import { CoverServiceClient } from '../../src/channels/wechat-personal/cover-service-client.mjs';
 import { FeiyuVoiceClient } from '../../src/channels/wechat-personal/feiyu-voice-client.mjs';
 import {
   listHostGroupBrains,
@@ -30,6 +31,7 @@ export const GROUP_BRAIN_ENDPOINTS = Object.freeze({
   testWechatPersonal: 'settings.group-brain.wechat-personal.test',
   wechatPersonalPersonas: 'settings.group-brain.wechat-personal.personas',
   testVoice: 'settings.group-brain.wechat-personal.voice.test',
+  testCover: 'settings.group-brain.wechat-personal.cover.test',
 });
 
 const SET_KEYS = new Set(['enabled', 'maxMembers', 'allowedGroups', 'ambient', 'memory', 'profiles', 'wechatPersonal']);
@@ -79,6 +81,7 @@ export function createGroupBrainRpcHandler({
   reloadBrains = reloadHostGroupBrains,
   wechatPersonalManager = null,
   voiceClientClass = null,
+  coverClientClass = null,
 } = {}) {
   const settingsStore = store ?? getGroupBrainSettingsStore(config);
   const manager = () => wechatPersonalManager ?? getWechatPersonalManager();
@@ -164,6 +167,27 @@ export function createGroupBrainRpcHandler({
           return {
             ok: false,
             error: { code: 'voice-test-failed', message: `声音服务测试失败：${error?.message ?? error}` },
+          };
+        }
+      }
+      if (endpoint === GROUP_BRAIN_ENDPOINTS.testCover) {
+        if (!isPlainRecord(payload)) return badRequest('Invalid cover test request.');
+        const serviceUrl = typeof payload.serviceUrl === 'string' ? payload.serviceUrl.trim() : '';
+        if (!serviceUrl) return badRequest('请先填写翻唱服务地址。');
+        try {
+          let apiKey = '';
+          if (typeof payload.apiKeyPath === 'string' && payload.apiKeyPath.trim()) {
+            apiKey = (await readFile(payload.apiKeyPath.trim(), 'utf8')).trim();
+            if (!apiKey) throw new Error('API Key 文件为空');
+          }
+          const CoverClient = coverClientClass ?? CoverServiceClient;
+          const client = new CoverClient({ baseUrl: serviceUrl, apiKey });
+          const health = await client.health();
+          return { ok: true, value: { serviceUrl, health } };
+        } catch (error) {
+          return {
+            ok: false,
+            error: { code: 'cover-test-failed', message: `翻唱服务测试失败：${error?.message ?? error}` },
           };
         }
       }

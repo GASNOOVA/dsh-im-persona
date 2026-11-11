@@ -192,3 +192,29 @@ test('group brain RPC tests the feiyu voice service with draft settings', async 
   assert.equal(invalid.ok, false);
   assert.equal(invalid.error.code, 'bad-request');
 });
+
+test('group brain RPC tests the cover service with draft settings', async () => {
+  const calls = [];
+  class FakeCoverClient {
+    constructor(options) { calls.push({ kind: 'construct', options }); }
+    async health() { calls.push({ kind: 'health' }); return { status: 'ok' }; }
+  }
+  const handler = createGroupBrainRpcHandler({
+    store: fakeStore(),
+    listBrains: () => [],
+    reloadBrains: async () => {},
+    coverClientClass: FakeCoverClient,
+  });
+  const result = await handler(GROUP_BRAIN_ENDPOINTS.testCover, {
+    serviceUrl: 'http://127.0.0.1:9860',
+    apiKeyPath: '',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.serviceUrl, 'http://127.0.0.1:9860');
+  assert.deepEqual(result.value.health, { status: 'ok' });
+  assert.equal(calls[0].options.baseUrl, 'http://127.0.0.1:9860');
+
+  const invalid = await handler(GROUP_BRAIN_ENDPOINTS.testCover, {});
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error.code, 'bad-request');
+});

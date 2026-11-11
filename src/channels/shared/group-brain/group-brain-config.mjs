@@ -55,11 +55,18 @@ export const DEFAULT_GROUP_BRAIN_SETTINGS = Object.freeze({
     personaId: 'dafeiyu-group',
     voice: Object.freeze({
       enabled: false,
+      mode: 'tag',
       serviceUrl: 'http://127.0.0.1:9880',
       apiKeyPath: '',
       style: 'cute',
       maxChars: 300,
       timeoutMs: 120_000,
+    }),
+    cover: Object.freeze({
+      enabled: false,
+      serviceUrl: '',
+      apiKeyPath: '',
+      maxPromptChars: 300,
     }),
   }),
 });
@@ -69,6 +76,12 @@ export const DEFAULT_WECHAT_PERSONAL_SETTINGS = DEFAULT_GROUP_BRAIN_SETTINGS.wec
 
 /** 微信个人号语音（飞鱼声音服务）默认值。 */
 export const DEFAULT_WECHAT_PERSONAL_VOICE_SETTINGS = DEFAULT_WECHAT_PERSONAL_SETTINGS.voice;
+
+/** 微信个人号 B 站翻唱（voice-hub）默认值。 */
+export const DEFAULT_WECHAT_PERSONAL_COVER_SETTINGS = DEFAULT_WECHAT_PERSONAL_SETTINGS.cover;
+
+/** 语音回复模式：tag=模型用标签决定是否发语音；always=普通回复一律语音条。 */
+export const WECHAT_PERSONAL_VOICE_MODES = Object.freeze(['tag', 'always']);
 
 /** 配置字段的合法范围（闭区间，整数）。 */
 export const GROUP_BRAIN_LIMITS = Object.freeze({
@@ -88,6 +101,7 @@ export const GROUP_BRAIN_LIMITS = Object.freeze({
   maxProfiles: Object.freeze([1, 20]),
   voiceMaxChars: Object.freeze([20, 600]),
   voiceTimeoutMs: Object.freeze([5_000, 300_000]),
+  coverMaxPromptChars: Object.freeze([20, 600]),
 });
 
 /** allowedGroups 最多条目数。 */
@@ -136,6 +150,18 @@ function normalizeWechatPersonalDaemonUrl(value) {
   }
 }
 
+/** 归一化翻唱服务地址：允许空字符串（未配置），否则只接受 http/https。 */
+export function normalizeCoverServiceUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
 /** 归一化声音服务地址：只接受 http/https，非法时回默认值。 */
 export function normalizeVoiceServiceUrl(value) {
   const fallback = DEFAULT_WECHAT_PERSONAL_VOICE_SETTINGS.serviceUrl;
@@ -156,11 +182,27 @@ export function normalizeWechatPersonalVoiceSettings(value) {
   const apiKeyPath = normalizeText(value.apiKeyPath, 1000);
   return Object.freeze({
     enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
+    mode: WECHAT_PERSONAL_VOICE_MODES.includes(value.mode) ? value.mode : defaults.mode,
     serviceUrl: normalizeVoiceServiceUrl(value.serviceUrl),
     apiKeyPath,
     style: value.style === 'gentle' ? 'gentle' : defaults.style,
     maxChars: isValidInteger(value.maxChars, GROUP_BRAIN_LIMITS.voiceMaxChars) ? value.maxChars : defaults.maxChars,
     timeoutMs: isValidInteger(value.timeoutMs, GROUP_BRAIN_LIMITS.voiceTimeoutMs) ? value.timeoutMs : defaults.timeoutMs,
+  });
+}
+
+/** 归一化微信个人号 B 站翻唱配置。 */
+export function normalizeWechatPersonalCoverSettings(value) {
+  const defaults = DEFAULT_WECHAT_PERSONAL_COVER_SETTINGS;
+  if (!isPlainRecord(value)) return defaults;
+  const apiKeyPath = normalizeText(value.apiKeyPath, 1000);
+  return Object.freeze({
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
+    serviceUrl: normalizeCoverServiceUrl(value.serviceUrl),
+    apiKeyPath,
+    maxPromptChars: isValidInteger(value.maxPromptChars, GROUP_BRAIN_LIMITS.coverMaxPromptChars)
+      ? value.maxPromptChars
+      : defaults.maxPromptChars,
   });
 }
 
@@ -178,6 +220,7 @@ export function normalizeWechatPersonalSettings(value) {
     accountId: /^[A-Za-z0-9_-]{1,64}$/.test(accountId) ? accountId : '',
     personaId: /^[A-Za-z0-9_.:-]{1,128}$/.test(personaId) ? personaId : defaults.personaId,
     voice: normalizeWechatPersonalVoiceSettings(value.voice),
+    cover: normalizeWechatPersonalCoverSettings(value.cover),
   });
 }
 

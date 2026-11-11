@@ -29,6 +29,7 @@ import {
   AgentWechatClient,
   normalizeAgentWechatDaemonUrl,
 } from '../../src/channels/wechat-personal/agent-wechat-client.mjs';
+import { CoverServiceClient } from '../../src/channels/wechat-personal/cover-service-client.mjs';
 import { FeiyuVoiceClient } from '../../src/channels/wechat-personal/feiyu-voice-client.mjs';
 import { WechatPersonalGroupBridge } from '../../src/channels/wechat-personal/wechat-personal-brain.mjs';
 import { createHarnessGroupBrainGenerator } from './group-brain-runtime.mjs';
@@ -480,10 +481,40 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
         synthesize: async (text) => client.speak({ text, style: voice.style }),
         maxChars: voice.maxChars,
         style: voice.style,
+        mode: voice.mode === 'always' ? 'always' : 'tag',
         serviceUrl: voice.serviceUrl,
       };
     } catch (error) {
       logger.warn?.('[wechat-personal] voice replies disabled: unable to initialise feiyu voice client:', error?.message ?? error);
+      return null;
+    }
+  }
+
+  /**
+   * 读取翻唱配置并创建 voice-hub 客户端：未启用/未配置地址/Key 读取失败都 fail-soft 返回 null，
+   * 此时群聊桥会忽略翻唱指令（回文字提示），不影响其它功能。
+   */
+  async function resolveCoverBridge(cover) {
+    if (!cover?.enabled || !cover.serviceUrl) return null;
+    try {
+      const apiKeyPath = typeof cover.apiKeyPath === 'string' ? cover.apiKeyPath.trim() : '';
+      let apiKey = '';
+      if (apiKeyPath) {
+        apiKey = (await readFile(apiKeyPath, 'utf8')).trim();
+        if (!apiKey) throw new Error('翻唱服务 API Key 文件为空');
+      }
+      const CoverClient = internals.coverServiceClientClass ?? CoverServiceClient;
+      const client = internals.coverServiceClient ?? new CoverClient({
+        baseUrl: cover.serviceUrl,
+        apiKey,
+      });
+      return {
+        client,
+        serviceUrl: cover.serviceUrl,
+        maxPromptChars: cover.maxPromptChars,
+      };
+    } catch (error) {
+      logger.warn?.('[wechat-personal] cover commands disabled: unable to initialise cover client:', error?.message ?? error);
       return null;
     }
   }
@@ -557,6 +588,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
     };
     const resolvePersona = async () => resolveWechatPersonalPersona(config, settings.personaId);
     const voice = await resolveVoiceBridge(settings.voice ?? {});
+    const cover = await resolveCoverBridge(settings.cover ?? {});
     // 闲时启用且处于 DeepSeek 高峰时，桥接层直接回固定提示，不进入模型。
     const isSleeping = async () => {
       try { return offPeakSettings.shouldBlockInbound?.(new Date()) === true; } catch { return false; }
@@ -585,6 +617,7 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
       sessionExists,
       isSleeping,
       voice,
+      cover,
       accountId: settings.accountId,
       ownUserId,
       statePath: cursorPathOf(config, settings.accountId),
@@ -688,6 +721,8 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
         : null,
       runtime,
       voice: current?.bridge?.voiceEnabled === true,
+      voiceMode: current?.bridge?.voiceMode ?? 'tag',
+      cover: current?.bridge?.coverEnabled === true,
       persona: current?.settings?.personaId ?? settings?.wechatPersonal?.personaId ?? DEFAULT_PERSONA_ID,
     };
   }

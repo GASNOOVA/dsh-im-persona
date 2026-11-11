@@ -164,6 +164,8 @@ for (const marker of [
   'settings.group-brain.consolidate',
   'settings.group-brain.wechat-personal.test',
   'settings.group-brain.wechat-personal.personas',
+  'settings.group-brain.wechat-personal.voice.test',
+  'settings.group-brain.wechat-personal.cover.test',
 ]) {
   if (!host.includes(marker) || !client.includes(marker)) {
     throw new Error(`group brain RPC endpoint missing from Host or Client bundle: ${marker}`);

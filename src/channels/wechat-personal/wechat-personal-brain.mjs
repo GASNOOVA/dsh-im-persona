@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 
 import { AMBIENT_REPLY_MAX_CHARS, SKIP_TOKEN } from '../shared/group-brain/group-context.mjs';
 import { OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS, offPeakSleepReplyText } from '../shared/off-peak.mjs';
+import { coverAckText, parseCoverCommand } from './cover-command.mjs';
 
 /** 单条回复的硬上限：微信文本消息远大于此，但刷屏保护仍然有价值。 */
 export const WECHAT_PERSONAL_MAX_REPLY_CHARS = 4_000;
@@ -27,6 +28,10 @@ export const WECHAT_PERSONAL_REPLY_QUEUE_LIMIT = 100;
 
 /** 续聊回复前的默认合并窗口：同一成员连续发言时合并成一次回复。 */
 export const WECHAT_PERSONAL_REPLY_MERGE_WINDOW_MS = 30_000;
+/** 「普通消息一律语音」模式下，每条语音条的最大字数。 */
+export const WECHAT_PERSONAL_VOICE_CHUNK_CHARS = 180;
+/** 「普通消息一律语音」模式下，一条回复最多拆成几段语音，防止刷屏。 */
+export const WECHAT_PERSONAL_VOICE_MAX_CHUNKS = 4;
 /** 群名/成员缓存时间：避免每条消息都打 daemon。 */
 export const WECHAT_PERSONAL_GROUP_CACHE_MS = 60_000;
 /** SSE 断线后的重连等待。 */
@@ -103,6 +108,9 @@ export class WechatPersonalGroupBridge {
   #sessionExists = null;
   #isSleeping = null;
   #voice = null;
+  #voiceMode = 'tag';
+  #cover = null;
+  #coverJobs = new Set();
   #sleepReplyAt = new Map();
   #accountId;
   #ownUserId;
@@ -130,6 +138,7 @@ export class WechatPersonalGroupBridge {
     sessionExists = null,
     isSleeping = null,
     voice = null,
+    cover = null,
     accountId,
     ownUserId,
     statePath,
@@ -150,6 +159,8 @@ export class WechatPersonalGroupBridge {
     this.#sessionExists = typeof sessionExists === 'function' ? sessionExists : null;
     this.#isSleeping = typeof isSleeping === 'function' ? isSleeping : null;
     this.#voice = voice && typeof voice.synthesize === 'function' ? voice : null;
+    this.#voiceMode = voice?.mode === 'always' ? 'always' : 'tag';
+    this.#cover = cover && cover.client && typeof cover.client.fetchCover === 'function' ? cover : null;
     this.#accountId = accountId;
     this.#ownUserId = ownUserId;
     this.#statePath = textOf(statePath) || join(process.cwd(), 'wechat-personal-cursor.json');
@@ -233,6 +244,8 @@ export class WechatPersonalGroupBridge {
       for (const timer of queue.timers.values()) clearTimeout(timer);
       queue.timers.clear();
     }
+    for (const controller of this.#coverJobs) controller.abort();
+    this.#coverJobs.clear();
     this.#abortController?.abort();
     const promise = this.#loopPromise;
     this.#loopPromise = null;
@@ -287,6 +300,9 @@ export class WechatPersonalGroupBridge {
         memberCount: group.memberCount,
         lastSeenAt: group.lastSeenAt,
       })),
+      voiceMode: this.#voiceMode,
+      coverEnabled: Boolean(this.#cover),
+      pendingCovers: this.#coverJobs.size,
       pendingReplies: [...this.#replyQueues.entries()]
         .filter(([, queue]) => queue.jobs.length > 0)
         .map(([chatId, queue]) => ({ chatId, count: queue.jobs.length })),
@@ -388,6 +404,7 @@ export class WechatPersonalGroupBridge {
       text,
       mentionedBot: addressed || repliedToBot,
       repliedToBot,
+      quoted: Boolean(quoted),
       at: Number.isFinite(Date.parse(message.createdAt ?? '')) ? Date.parse(message.createdAt) : this.#now(),
       kind: 'group',
     };
@@ -401,6 +418,15 @@ export class WechatPersonalGroupBridge {
     this.#groups.set(chatId, { ...(this.#groups.get(chatId) ?? {}), chatId, name: group.name, memberCount: group.memberCount, lastSeenAt: event.at });
     if (await this.#isSleepingNow()) {
       if (observed?.direct) await this.#sendSleepReply({ event, group });
+      return;
+    }
+    // 翻唱指令：引用一条消息 + 文本里带 B 站链接 + 「翻唱」关键词。
+    // 命中后不进入普通回复流程：先回一条确认，再异步生成翻唱文件（长任务）。
+    const coverCommand = this.#cover && event.quoted
+      ? parseCoverCommand(text, { maxPromptChars: this.#cover.maxPromptChars })
+      : null;
+    if (coverCommand) {
+      await this.#startCoverJob({ event, coverCommand });
       return;
     }
     // 同一个群的所有回复进入 FIFO 队列：多个群成员同时说话时依次回复，
@@ -539,10 +565,137 @@ export class WechatPersonalGroupBridge {
     return Boolean(this.#voice);
   }
 
+  /** 语音回复模式：tag=标签触发；always=普通回复一律语音条。 */
+  get voiceMode() {
+    return this.#voiceMode;
+  }
+
+  /** B 站翻唱能力是否启用。 */
+  get coverEnabled() {
+    return Boolean(this.#cover);
+  }
+
   #voiceInstruction() {
-    if (!this.#voice) return '';
+    if (!this.#voice || this.#voiceMode === 'always') return '';
     const max = Number.isInteger(this.#voice.maxChars) ? this.#voice.maxChars : 300;
     return `语音：群里可以接收语音。只有当你主动想用语音，或群成员明确要求「用语音/朗读/唱一句/发语音」时，才把要说的话（纯文本、不超过 ${max} 字、不要 Markdown）放进 <dsh_im_voice>…</dsh_im_voice> 标签；标签外文字会作为普通文字消息。不要滥用语音。`;
+  }
+
+  /** 把一段回复拆成若干段语音文本（按句读切分，单段不超过 maxChars）。 */
+  #splitVoiceChunks(text) {
+    const maxChars = Math.max(20, Math.min(
+      WECHAT_PERSONAL_VOICE_CHUNK_CHARS,
+      Number.isInteger(this.#voice?.maxChars) ? this.#voice.maxChars : WECHAT_PERSONAL_VOICE_CHUNK_CHARS,
+    ));
+    const clean = textOf(text).replace(/<[^>]+>/g, ' ');
+    if (!clean) return [];
+    const sentences = clean.match(/[^。！？!?；;，,\n]+[。！？!?；;，,\n]*/g) ?? [clean];
+    const chunks = [];
+    let current = '';
+    for (const sentence of sentences) {
+      const piece = sentence.trim();
+      if (!piece) continue;
+      if (current && (current + piece).length > maxChars) {
+        chunks.push(current);
+        current = '';
+      }
+      if (piece.length > maxChars) {
+        if (current) { chunks.push(current); current = ''; }
+        for (let index = 0; index < piece.length; index += maxChars) chunks.push(piece.slice(index, index + maxChars));
+      } else {
+        current += piece;
+      }
+      if (chunks.length >= WECHAT_PERSONAL_VOICE_MAX_CHUNKS) break;
+    }
+    if (current) chunks.push(current);
+    return chunks.slice(0, WECHAT_PERSONAL_VOICE_MAX_CHUNKS);
+  }
+
+  /**
+   * 「普通消息一律语音」：把整段回复合成为一条或多条微信语音。
+   * 返回 { sent, remaining }；failed 时 remaining 为尚未合成的文本，由调用方回退成文字。
+   */
+  async #sendVoiceReply({ chatId, text, groupName }) {
+    const clean = textOf(text);
+    if (!this.#voice || !clean) return { sent: false, remaining: clean };
+    const chunks = this.#splitVoiceChunks(clean);
+    if (chunks.length === 0) return { sent: false, remaining: clean };
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      try {
+        const bytes = await this.#voice.synthesize(chunk);
+        const upload = await this.#client.uploadMedia({ name: 'dafeiyu-voice.wav', bytes, mediaType: 'audio/wav' });
+        const sourceId = typeof upload?.id === 'string' ? upload.id : '';
+        if (!sourceId) throw new Error('media upload did not return an id');
+        await this.#client.sendVoice({ threadId: chatId, sourceId });
+        await this.#recordBotMessage({ chatId, text: `[语音] ${chunk}`, groupName });
+      } catch (error) {
+        this.#logger.warn?.('[dsh-im:wechat-personal] all-voice reply failed:', error?.message ?? error);
+        return { sent: index > 0, remaining: chunks.slice(index).join('') };
+      }
+    }
+    return { sent: true, remaining: '' };
+  }
+
+  /** 翻唱指令：先回确认，再异步生成文件；失败回一条文字说明。 */
+  async #startCoverJob({ event, coverCommand }) {
+    const ack = coverAckText({ mix: coverCommand.mix });
+    try {
+      await this.#client.sendText({
+        threadId: event.chatId,
+        text: ack,
+        ...(event.mentionedBot ? { mentions: { userIds: [event.senderId] } } : {}),
+      });
+      await this.#recordBotMessage({ chatId: event.chatId, text: ack, groupName: event.groupName });
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] cover ack failed:', error?.message ?? error);
+    }
+    const controller = new AbortController();
+    this.#coverJobs.add(controller);
+    void (async () => {
+      try {
+        const result = await this.#cover.client.fetchCover({
+          url: coverCommand.url,
+          mix: coverCommand.mix,
+          prompt: coverCommand.prompt,
+          signal: controller.signal,
+        });
+        await this.#sendCoverResult({ event, result });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const message = `翻唱失败：${String(error?.message ?? error).slice(0, 300)}`;
+        this.#logger.warn?.('[dsh-im:wechat-personal] cover job failed:', error?.message ?? error);
+        try {
+          await this.#client.sendText({ threadId: event.chatId, text: message });
+          await this.#recordBotMessage({ chatId: event.chatId, text: message, groupName: event.groupName });
+        } catch (sendError) {
+          this.#logger.warn?.('[dsh-im:wechat-personal] unable to report cover failure:', sendError?.message ?? sendError);
+        }
+      } finally {
+        this.#coverJobs.delete(controller);
+      }
+    })();
+  }
+
+  /** 翻唱文件回传：上传 MP3 后以文件发送。 */
+  async #sendCoverResult({ event, result }) {
+    const title = textOf(result?.title) || textOf(result?.bvid) || 'B 站视频';
+    const baseName = textOf(result?.title) || textOf(result?.bvid) || 'cover';
+    const safeName = baseName.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 80) || 'cover';
+    const format = result?.format === 'wav' ? 'wav' : 'mp3';
+    const upload = await this.#client.uploadMedia({
+      name: `${safeName}.${format}`,
+      bytes: result.bytes,
+      mediaType: format === 'wav' ? 'audio/wav' : 'audio/mpeg',
+    });
+    const sourceId = typeof upload?.id === 'string' ? upload.id : '';
+    if (!sourceId) throw new Error('翻唱文件上传未返回 id');
+    await this.#client.sendFile({ threadId: event.chatId, sourceId });
+    const label = result?.mix === true ? '混音版' : '纯人声版';
+    const seconds = Number.isFinite(result?.durationSeconds) ? `，约 ${Math.round(result.durationSeconds)} 秒` : '';
+    const caption = `翻唱完成：${title}（${label}${seconds}）`;
+    await this.#client.sendText({ threadId: event.chatId, text: caption });
+    await this.#recordBotMessage({ chatId: event.chatId, text: `[翻唱] ${title}（${label}）`, groupName: event.groupName });
   }
 
   async #sendVoiceNote({ chatId, text, groupName }) {
@@ -586,9 +739,13 @@ export class WechatPersonalGroupBridge {
       if (blocks.length > 0) sections.push(...blocks);
       const voiceHint = this.#voiceInstruction();
       if (voiceHint) sections.push(voiceHint);
-      sections.push(this.#voice
-        ? '请直接回复：普通文字直接输出；如果要发语音，把朗读文字放进 <dsh_im_voice> 标签。不要使用 Markdown 标记，不要输出解释过程，像群友聊天一样简洁自然。'
-        : '请用纯文本直接回复（不要使用 Markdown 标记，不要输出解释过程）；回复要像群友聊天，简洁自然。');
+      if (this.#voice && this.#voiceMode === 'always') {
+        sections.push('请直接输出回复正文（纯文本、不要 Markdown 标记、不要输出解释过程）；系统会自动把这段回复转成微信语音条。像群友聊天一样简洁自然。');
+      } else if (this.#voice) {
+        sections.push('请直接回复：普通文字直接输出；如果要发语音，把朗读文字放进 <dsh_im_voice> 标签。不要使用 Markdown 标记，不要输出解释过程，像群友聊天一样简洁自然。');
+      } else {
+        sections.push('请用纯文本直接回复（不要使用 Markdown 标记，不要输出解释过程）；回复要像群友聊天，简洁自然。');
+      }
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'direct',
@@ -597,6 +754,16 @@ export class WechatPersonalGroupBridge {
       });
       const text = textOf(raw);
       if (!text || text === SKIP_TOKEN || text.startsWith(SKIP_TOKEN)) return;
+      if (this.#voice && this.#voiceMode === 'always') {
+        const spoken = await this.#sendVoiceReply({ chatId: event.chatId, text, groupName: event.groupName });
+        const leftover = textOf(spoken.remaining).slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+        if (spoken.sent && !leftover) return;
+        if (leftover) {
+          await this.#client.sendText({ threadId: event.chatId, text: leftover, mentions: { userIds: [event.senderId] } });
+          await this.#recordBotMessage({ chatId: event.chatId, text: leftover, groupName: event.groupName });
+          return;
+        }
+      }
       const parsed = extractVoiceTag(text);
       let voiceSent = false;
       if (parsed.voiceText) {
@@ -633,9 +800,13 @@ export class WechatPersonalGroupBridge {
       // TODO(识图暂停)：恢复识图时，在 prompt 中加入「对方还发送了一张图片…」并把 images 传给 generate。
       const voiceHint = this.#voiceInstruction();
       if (voiceHint) sections.push(voiceHint);
-      sections.push(this.#voice
-        ? '群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释。普通文字直接输出；要发语音时把朗读文字放进 <dsh_im_voice> 标签。'
-        : '群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
+      if (this.#voice && this.#voiceMode === 'always') {
+        sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释。直接输出回复正文，系统会自动把这段回复转成微信语音条。');
+      } else if (this.#voice) {
+        sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释。普通文字直接输出；要发语音时把朗读文字放进 <dsh_im_voice> 标签。');
+      } else {
+        sections.push('群里正在和你聊天。请像群友一样自然地接一句，延续对话；不要 @ 人，不要使用 Markdown，不要解释，直接输出回复正文。');
+      }
       const prompt = sections.join('\n\n');
       const raw = await this.#generate({
         kind: 'follow-up',
@@ -644,6 +815,16 @@ export class WechatPersonalGroupBridge {
       });
       const text = textOf(raw);
       if (!text || text === SKIP_TOKEN || text.startsWith(SKIP_TOKEN)) return;
+      if (this.#voice && this.#voiceMode === 'always') {
+        const spoken = await this.#sendVoiceReply({ chatId: event.chatId, text, groupName: event.groupName });
+        const leftover = textOf(spoken.remaining).slice(0, WECHAT_PERSONAL_MAX_REPLY_CHARS);
+        if (spoken.sent && !leftover) return;
+        if (leftover) {
+          await this.#client.sendText({ threadId: event.chatId, text: leftover });
+          await this.#recordBotMessage({ chatId: event.chatId, text: leftover, groupName: event.groupName });
+          return;
+        }
+      }
       const parsed = extractVoiceTag(text);
       let voiceSent = false;
       if (parsed.voiceText) {

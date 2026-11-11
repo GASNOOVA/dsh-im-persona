@@ -10,6 +10,7 @@ export const GROUP_BRAIN_ENDPOINTS = Object.freeze({
   testWechatPersonal: 'settings.group-brain.wechat-personal.test',
   wechatPersonalPersonas: 'settings.group-brain.wechat-personal.personas',
   testVoice: 'settings.group-brain.wechat-personal.voice.test',
+  testCover: 'settings.group-brain.wechat-personal.cover.test',
 });
 
 const DEFAULT_BRAIN_TEMPLATE = Object.freeze({
@@ -27,11 +28,18 @@ const DEFAULT_BRAIN_TEMPLATE = Object.freeze({
     personaId: 'dafeiyu-group',
     voice: {
       enabled: false,
+      mode: 'tag',
       serviceUrl: 'http://127.0.0.1:9880',
       apiKeyPath: '',
       style: 'cute',
       maxChars: 300,
       timeoutMs: 120_000,
+    },
+    cover: {
+      enabled: false,
+      serviceUrl: '',
+      apiKeyPath: '',
+      maxPromptChars: 300,
     },
   },
 });
@@ -84,6 +92,7 @@ function normalizeSettings(value) {
         ...DEFAULT_BRAIN_TEMPLATE.wechatPersonal.voice,
         ...(wechatPersonal.voice && typeof wechatPersonal.voice === 'object' ? {
           enabled: wechatPersonal.voice.enabled === true,
+          mode: wechatPersonal.voice.mode === 'always' ? 'always' : 'tag',
           serviceUrl: typeof wechatPersonal.voice.serviceUrl === 'string' && wechatPersonal.voice.serviceUrl
             ? wechatPersonal.voice.serviceUrl : DEFAULT_BRAIN_TEMPLATE.wechatPersonal.voice.serviceUrl,
           apiKeyPath: typeof wechatPersonal.voice.apiKeyPath === 'string' ? wechatPersonal.voice.apiKeyPath : '',
@@ -92,6 +101,16 @@ function normalizeSettings(value) {
             ? wechatPersonal.voice.maxChars : DEFAULT_BRAIN_TEMPLATE.wechatPersonal.voice.maxChars,
           timeoutMs: Number.isInteger(wechatPersonal.voice.timeoutMs)
             ? wechatPersonal.voice.timeoutMs : DEFAULT_BRAIN_TEMPLATE.wechatPersonal.voice.timeoutMs,
+        } : {}),
+      },
+      cover: {
+        ...DEFAULT_BRAIN_TEMPLATE.wechatPersonal.cover,
+        ...(wechatPersonal.cover && typeof wechatPersonal.cover === 'object' ? {
+          enabled: wechatPersonal.cover.enabled === true,
+          serviceUrl: typeof wechatPersonal.cover.serviceUrl === 'string' ? wechatPersonal.cover.serviceUrl : '',
+          apiKeyPath: typeof wechatPersonal.cover.apiKeyPath === 'string' ? wechatPersonal.cover.apiKeyPath : '',
+          maxPromptChars: Number.isInteger(wechatPersonal.cover.maxPromptChars)
+            ? wechatPersonal.cover.maxPromptChars : DEFAULT_BRAIN_TEMPLATE.wechatPersonal.cover.maxPromptChars,
         } : {}),
       },
     },
@@ -205,6 +224,8 @@ export function GroupBrainSettings({ rpcCall }) {
   const [testNotice, setTestNotice] = React.useState('');
   const [voiceTesting, setVoiceTesting] = React.useState(false);
   const [voiceNotice, setVoiceNotice] = React.useState('');
+  const [coverTesting, setCoverTesting] = React.useState(false);
+  const [coverNotice, setCoverNotice] = React.useState('');
   const mounted = React.useRef(false);
   const busy = React.useRef(false);
   const id = React.useId();
@@ -307,6 +328,9 @@ export function GroupBrainSettings({ rpcCall }) {
   const patchVoice = (update) => setDraft((current) => (current
     ? { ...current, wechatPersonal: { ...current.wechatPersonal, voice: { ...current.wechatPersonal.voice, ...update } } }
     : current));
+  const patchCover = (update) => setDraft((current) => (current
+    ? { ...current, wechatPersonal: { ...current.wechatPersonal, cover: { ...current.wechatPersonal.cover, ...update } } }
+    : current));
 
   const testVoice = async () => {
     if (disabled || voiceTesting) return;
@@ -328,6 +352,23 @@ export function GroupBrainSettings({ rpcCall }) {
       if (mounted.current) setVoiceNotice(caught.message);
     } finally {
       if (mounted.current) setVoiceTesting(false);
+    }
+  };
+
+  const testCover = async () => {
+    if (disabled || coverTesting) return;
+    setCoverTesting(true); setCoverNotice(''); setError(null);
+    try {
+      const cover = draft?.wechatPersonal?.cover ?? DEFAULT_BRAIN_TEMPLATE.wechatPersonal.cover;
+      unwrap(await rpcCall(GROUP_BRAIN_ENDPOINTS.testCover, {
+        serviceUrl: cover.serviceUrl,
+        apiKeyPath: cover.apiKeyPath,
+      }), '翻唱服务测试失败。');
+      if (mounted.current) setCoverNotice('翻唱服务连接正常。');
+    } catch (caught) {
+      if (mounted.current) setCoverNotice(caught.message);
+    } finally {
+      if (mounted.current) setCoverTesting(false);
     }
   };
 
@@ -479,14 +520,24 @@ export function GroupBrainSettings({ rpcCall }) {
         h('div', { className: 'dim-botGeneralFieldset dim-botGeneralFieldsetNested' },
           h('legend', { className: 'dim-botGeneralTitle' }, '语音回复（feiyu 声音服务）'),
           h('p', { className: 'dim-botGeneralHelp' },
-            '启用后，群里有人明确要求发语音时，大肥鱼会把回复交给本机的飞鱼声音服务（feiyu）合成为微信语音条；服务不可用时自动退回文字。需要先按 astrobot_plugin_feiyu_voice/server 的文档在带 GPU 的机器上部署声音服务。'),
+            '启用后，大肥鱼的回复交给声音服务（voice-hub/GPT-SoVITS）合成为微信语音条。语音模式选“标签触发”时只有模型主动使用语音标签才发语音；“始终语音”时每条普通回复都先转语音条（失败自动退回文字）。需要先在带 GPU 的机器上部署声音服务。'),
           h(SwitchRow, {
             id: `${id}-wechat-voice`, label: '启用语音回复', checked: draft.wechatPersonal.voice.enabled,
             disabled: disabled || !draft.wechatPersonal.enabled,
-            help: '只在微信群聊中生效；模型会按需使用 <dsh_im_voice> 标签。',
+            help: '只在微信群聊中生效。',
             onChange: (value) => patchVoice({ enabled: value }),
           }),
           h('div', { className: 'dim-botGeneralGrid' },
+            h('label', { className: 'dim-botGeneralField', htmlFor: `${id}-wechat-voice-mode` },
+              h('span', { className: 'dim-botGeneralTitle' }, '语音模式'),
+              h('select', {
+                id: `${id}-wechat-voice-mode`, className: 'dim-textInput',
+                value: draft.wechatPersonal.voice.mode,
+                disabled: disabled || !draft.wechatPersonal.voice.enabled,
+                onChange: (event) => patchVoice({ mode: event.target.value }),
+              },
+              h('option', { value: 'tag' }, '标签触发（模型按需发语音）'),
+              h('option', { value: 'always' }, '始终语音（普通回复一律发语音条）'))),
             h(TextField, {
               id: `${id}-wechat-voice-url`, label: '声音服务地址', value: draft.wechatPersonal.voice.serviceUrl,
               placeholder: 'http://127.0.0.1:9880', disabled: disabled || !draft.wechatPersonal.voice.enabled,
@@ -520,6 +571,42 @@ export function GroupBrainSettings({ rpcCall }) {
             h('button', { type: 'button', className: 'dim-deliveryButton', disabled: disabled || voiceTesting, onClick: testVoice },
               voiceTesting ? '正在合成…' : '测试声音服务')),
           voiceNotice ? h('p', { role: 'status', className: 'dim-botGeneralHelp' }, voiceNotice) : null),
+        h('div', { className: 'dim-botGeneralFieldset dim-botGeneralFieldsetNested' },
+          h('legend', { className: 'dim-botGeneralTitle' }, 'B 站翻唱（voice-hub）'),
+          h('p', { className: 'dim-botGeneralHelp' },
+            '群成员引用一条消息后发送 B 站视频链接和翻唱要求（文本需包含“翻唱”），机器人会调用 voice-hub 生成翻唱并回传；默认只输出纯人声，提示词里写“混音/带伴奏”才生成混音版。生成在后台进行，长音频以文件形式发送。'),
+          h(SwitchRow, {
+            id: `${id}-wechat-cover`, label: '启用 B 站翻唱', checked: draft.wechatPersonal.cover.enabled,
+            disabled: disabled || !draft.wechatPersonal.enabled,
+            help: '需要先部署 voice-hub 翻唱服务。',
+            onChange: (value) => patchCover({ enabled: value }),
+          }),
+          h('div', { className: 'dim-botGeneralGrid' },
+            h(TextField, {
+              id: `${id}-wechat-cover-url`, label: '翻唱服务地址', value: draft.wechatPersonal.cover.serviceUrl,
+              placeholder: 'http://127.0.0.1:9860',
+              disabled: disabled || !draft.wechatPersonal.enabled || !draft.wechatPersonal.cover.enabled,
+              help: 'voice-hub 的 HTTP 地址（本机可走 SSH 隧道）。',
+              onChange: (value) => patchCover({ serviceUrl: value.trim() }),
+            }),
+            h(TextField, {
+              id: `${id}-wechat-cover-key`, label: 'API Key 文件路径', value: draft.wechatPersonal.cover.apiKeyPath,
+              placeholder: '/path/to/voice-hub-api-key',
+              disabled: disabled || !draft.wechatPersonal.enabled || !draft.wechatPersonal.cover.enabled,
+              help: '插件只读取该文件，不写入、不显示 Key 内容。',
+              onChange: (value) => patchCover({ apiKeyPath: value.trim() }),
+            }),
+            h(NumberField, {
+              id: `${id}-wechat-cover-max-prompt`, label: '翻唱提示词最多字数', value: draft.wechatPersonal.cover.maxPromptChars,
+              min: 20, max: 600,
+              disabled: disabled || !draft.wechatPersonal.enabled || !draft.wechatPersonal.cover.enabled,
+              help: '从引用消息的文本里提取的翻唱要求最多保留多少字。',
+              onChange: (value) => patchCover({ maxPromptChars: value }),
+            })),
+          h('div', { className: 'dim-botGeneralActions' },
+            h('button', { type: 'button', className: 'dim-deliveryButton', disabled: disabled || coverTesting, onClick: testCover },
+              coverTesting ? '正在测试…' : '测试翻唱服务')),
+          coverNotice ? h('p', { role: 'status', className: 'dim-botGeneralHelp' }, coverNotice) : null),
         h('div', { className: 'dim-botGeneralActions' },
           h('button', { type: 'button', className: 'dim-deliveryButton', disabled: disabled || testing, onClick: testWechatPersonal },
             testing ? '正在测试…' : '测试 daemon 连接')),

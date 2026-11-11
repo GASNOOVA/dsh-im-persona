@@ -401,6 +401,20 @@ export class AgentWechatClient {
     });
   }
 
+  /** 发送文件：sourceId 来自 uploadMedia；返回 MediaJob（202）。 */
+  async sendFile({ threadId, sourceId, idempotencyKey, signal } = {}) {
+    if (typeof threadId !== 'string' || !threadId) throw new TypeError('threadId is required');
+    if (typeof sourceId !== 'string' || !sourceId) throw new TypeError('sourceId is required');
+    const key = typeof idempotencyKey === 'string' && idempotencyKey
+      ? idempotencyKey
+      : `dsh-im-file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    return this.#request('POST', `/v1/accounts/${encode(this.#accountId)}/sends`, {
+      signal,
+      headers: { 'Idempotency-Key': key },
+      body: { kind: 'file', threadId, sourceId },
+    });
+  }
+
   /**
    * SSE 事件流：断线重连时由调用方传入 after 游标补发。
    * yield { id, cursor, kind, payload, createdAt }。
