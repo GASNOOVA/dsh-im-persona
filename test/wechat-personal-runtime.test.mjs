@@ -484,3 +484,56 @@ test('disabling the wechat personal bridge stops the owned daemon', async () => 
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('the voice bridge probes remote health once and caches availability', async () => {
+  const { state, internals } = mocks();
+  const home = await makeHome();
+  const tokenPath = join(home, 'api-token');
+  const voiceKeyPath = join(home, 'voice-key');
+  await writeFile(tokenPath, 'secret-token\n', 'utf8');
+  await writeFile(voiceKeyPath, 'voice-key\n', 'utf8');
+  let healthCalls = 0;
+  class FakeVoiceClient {
+    constructor(options) { this.options = options; }
+    async health() { healthCalls += 1; return { status: 'ok' }; }
+    async speak() { return new Uint8Array([1]); }
+  }
+  try {
+    const settings = {
+      ...BASE_SETTINGS,
+      wechatPersonal: {
+        ...BASE_SETTINGS.wechatPersonal,
+        tokenPath,
+        voice: {
+          enabled: true,
+          mode: 'always',
+          serviceUrl: 'http://127.0.0.1:9860',
+          apiKeyPath: voiceKeyPath,
+          style: 'cute',
+          maxChars: 300,
+          timeoutMs: 120000,
+        },
+      },
+    };
+    const manager = createWechatPersonalManager({
+      config: { dshHome: home },
+      internals: {
+        ...internals,
+        voiceClientClass: FakeVoiceClient,
+        settingsStore: fakeSettingsStore(settings),
+        generate: async () => '你好',
+      },
+    });
+    const result = await manager.reload();
+    assert.equal(result.ok, true);
+    const voice = state.bridges[0].options.voice;
+    assert.equal(voice.mode, 'always');
+    assert.equal(typeof voice.isAvailable, 'function');
+    assert.equal(await voice.isAvailable(), true);
+    assert.equal(await voice.isAvailable(), true);
+    assert.equal(healthCalls, 1);
+    await manager.close();
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

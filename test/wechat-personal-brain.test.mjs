@@ -842,8 +842,7 @@ test('a quoted cover command downloads the Bilibili video and sends the cover fi
       assert.equal(client.uploads.length, 1);
       assert.equal(client.uploads[0].mediaType, 'audio/mpeg');
       assert.deepEqual(client.files[0], { threadId: GROUP_ID, sourceId: 'upload-1' });
-      await waitFor(() => client.sent.length >= 1, 'ack text should be sent');
-      assert.ok(client.sent.some((item) => item.text.includes('翻唱')));
+      assert.ok(!client.sent.some((item) => item.text.includes('收到翻唱请求')), 'accepting a cover command must stay silent');
     } finally {
       await bridge.stop();
     }
@@ -893,6 +892,194 @@ test('a cover command can use the most recent Bilibili link in the chat', async 
       assert.equal(requests.length, 1);
       assert.equal(requests[0].url, 'https://www.bilibili.com/video/BV1xx411c7mD');
       assert.equal(requests[0].mix, false);
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('the #语音模式 injected command toggles voice replies for the chat', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-voice-toggle-'));
+  try {
+    const messages = [
+      { id: 'msg-control', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '#语音模式 关', createdAt: '2026-11-10T06:10:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+      { id: 'msg-after', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 在吗', createdAt: '2026-11-10T06:11:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [
+      { id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-control', direction: 'incoming', threadId: GROUP_ID, type: 1 } },
+      { id: '2', cursor: '2', kind: 'message.committed', payload: { messageId: 'msg-after', direction: 'incoming', threadId: GROUP_ID, type: 1 } },
+    ];
+    const synthesized = [];
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '在的在的。',
+      resolvePersona: async () => null,
+      voice: {
+        mode: 'always',
+        synthesize: async (text) => { synthesized.push(text); return new Uint8Array([1]); },
+        maxChars: 300,
+        style: 'cute',
+        isAvailable: async () => true,
+      },
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.sent.length >= 2, 'control ack and text reply should be sent');
+      assert.equal(synthesized.length, 0);
+      assert.equal(client.voices.length, 0);
+      assert.ok(client.sent.some((item) => item.text.includes('语音模式已关闭')));
+      assert.ok(client.sent.some((item) => item.text === '在的在的。'));
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('the #闭嘴 injected command pauses follow-ups until the next @ mention', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-mute-'));
+  try {
+    const messages = [
+      { id: 'msg-mute', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '#闭嘴', createdAt: '2026-11-10T06:20:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+      { id: 'msg-quiet-1', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '继续聊呀', createdAt: '2026-11-10T06:21:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+      { id: 'msg-wake', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 回来啦', createdAt: '2026-11-10T06:22:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+      { id: 'msg-quiet-2', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '再说一句', createdAt: '2026-11-10T06:23:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = messages.map((message, index) => ({
+      id: String(index + 1),
+      cursor: String(index + 1),
+      kind: 'message.committed',
+      payload: { messageId: message.id, direction: 'incoming', threadId: GROUP_ID, type: 1 },
+    }));
+    const prompts = [];
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain({ direct: true, followUp: true }),
+      generate: async (request) => { prompts.push(request.prompt); return '好呀。'; },
+      resolvePersona: async () => null,
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.sent.filter((item) => item.text === '好呀。').length === 2, 'direct reply and follow-up reply should be sent');
+      assert.equal(prompts.length, 2);
+      assert.ok(client.sent.some((item) => item.text.includes('不自动接话')));
+      assert.ok(!prompts.some((prompt) => prompt.includes('刚刚说：\n继续聊呀')));
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('voice replies fall back to text while a cover job is running', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-cover-busy-'));
+  try {
+    const messages = [
+      { id: 'msg-cover-busy', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '翻唱 https://b23.tv/qTRQCgV 温柔一点', createdAt: '2026-11-10T06:30:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+      { id: 'msg-ask-busy', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 在吗', createdAt: '2026-11-10T06:31:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [
+      { id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-cover-busy', direction: 'incoming', threadId: GROUP_ID, type: 1 } },
+      { id: '2', cursor: '2', kind: 'message.committed', payload: { messageId: 'msg-ask-busy', direction: 'incoming', threadId: GROUP_ID, type: 1 } },
+    ];
+    let releaseCover = null;
+    const pendingCover = new Promise((resolve) => { releaseCover = resolve; });
+    const requests = [];
+    const cover = {
+      maxPromptChars: 300,
+      client: {
+        fetchCover: async (request) => {
+          requests.push(request);
+          await pendingCover;
+          return { bytes: new Uint8Array([1, 2, 3]), format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD' };
+        },
+      },
+    };
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '在的在的。',
+      resolvePersona: async () => null,
+      voice: {
+        mode: 'always',
+        synthesize: async () => { throw new Error('should not be called'); },
+        maxChars: 300,
+        style: 'cute',
+        isAvailable: async () => true,
+      },
+      cover,
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => requests.length === 1, 'cover job should start');
+      await waitFor(() => client.sent.some((item) => item.text === '在的在的。'), 'reply while cover runs should be text');
+      assert.equal(client.voices.length, 0);
+      releaseCover();
+      await waitFor(() => client.files.length === 1, 'cover file should be sent');
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('voice replies fall back to text when the remote voice service is unavailable', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-voice-down-'));
+  try {
+    const messages = [
+      { id: 'msg-down', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '@大肥鱼 在吗', createdAt: '2026-11-10T06:40:00+00:00', mentions: { all: false, self: true, state: 'known', userIds: [OWN_ID] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-down', direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
+    let synthesized = 0;
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '在的在的。',
+      resolvePersona: async () => null,
+      voice: {
+        mode: 'always',
+        synthesize: async () => { synthesized += 1; return new Uint8Array([1]); },
+        maxChars: 300,
+        style: 'cute',
+        isAvailable: async () => false,
+      },
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.sent.length === 1, 'text reply should be sent');
+      assert.equal(synthesized, 0);
+      assert.equal(client.voices.length, 0);
+      assert.equal(client.sent[0].text, '在的在的。');
     } finally {
       await bridge.stop();
     }

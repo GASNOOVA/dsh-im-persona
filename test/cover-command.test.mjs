@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  coverAckText,
   findBilibiliUrl,
   isCoverCommandText,
   parseCoverCommand,
@@ -67,10 +66,8 @@ test('parseCoverCommand truncates prompts and rejects empty urls', () => {
   assert.equal(parseCoverCommand('翻唱 没有链接', {}), null);
 });
 
-test('isCoverCommandText and coverAckText describe the pending job', () => {
+test('isCoverCommandText detects keyword plus Bilibili link', () => {
   const text = '翻唱 https://www.bilibili.com/video/BV1xx411c7mD';
   assert.equal(isCoverCommandText(text), true);
   assert.equal(isCoverCommandText('你好'), false);
-  assert.match(coverAckText({ mix: false }), /纯人声/u);
-  assert.match(coverAckText({ mix: true }), /混音/u);
 });

@@ -477,12 +477,28 @@ export function createWechatPersonalManager({ ctx = null, config: rawConfig = {}
         apiKey,
         timeoutMs: voice.timeoutMs,
       });
+      // 健康检查带 60 秒缓存：远端声音服务（或 SSH 隧道）不可用时，桥接层自动改用文字回复。
+      let healthOk = false;
+      let healthCheckedAt = 0;
+      const isAvailable = async () => {
+        const now = Date.now();
+        if (now - healthCheckedAt < 60_000) return healthOk;
+        try {
+          await client.health();
+          healthOk = true;
+        } catch {
+          healthOk = false;
+        }
+        healthCheckedAt = now;
+        return healthOk;
+      };
       return {
         synthesize: async (text) => client.speak({ text, style: voice.style }),
         maxChars: voice.maxChars,
         style: voice.style,
         mode: voice.mode === 'always' ? 'always' : 'tag',
         serviceUrl: voice.serviceUrl,
+        isAvailable,
       };
     } catch (error) {
       logger.warn?.('[wechat-personal] voice replies disabled: unable to initialise feiyu voice client:', error?.message ?? error);

@@ -54,10 +54,3 @@ export function parseCoverCommand(text, { maxPromptChars = 300, quotedText = '',
   if (prompt.length > limit) prompt = prompt.slice(0, limit);
   return { url, prompt, mix: MIX_RE.test(prompt) };
 }
-
-/** 给用户看的简短确认文案。 */
-export function coverAckText({ mix = false } = {}) {
-  return mix
-    ? '收到翻唱请求（混音版），正在从 B 站提取音频并生成翻唱，完成后发给你～'
-    : '收到翻唱请求（纯人声版），正在从 B 站提取音频并生成翻唱，完成后发给你～';
-}
