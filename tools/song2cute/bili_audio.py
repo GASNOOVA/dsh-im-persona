@@ -217,8 +217,8 @@ def extract(
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
-            "retries": 3,
-            "fragment_retries": 3,
+            "retries": 1,
+            "fragment_retries": 1,
             "socket_timeout": 30,
             # B 站对部分视频的 CDN 返回 567：带上来源页与桌面 UA 可显著降低风控概率。
             "referer": "https://www.bilibili.com/",
@@ -241,8 +241,27 @@ def extract(
                 "title": data.get("title"),
                 "durationSeconds": data.get("duration"),
             }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            data = ydl.extract_info(clean, download=True)
+        # B 站 CDN 会对部分请求随机返回 HTTP 567（与请求头无关，换一次 playurl 常常就好）。
+        # yt-dlp 内部重试会沿用同一个 CDN 地址，因此这里整轮重试，让它重新解析 playurl。
+        data = None
+        last_error = None
+        for attempt in range(1, 5):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    data = ydl.extract_info(clean, download=True)
+                last_error = None
+                break
+            except Exception as error:  # noqa: BLE001 - 交给上层按最终结果报错
+                last_error = error
+                for stale in task_dir.glob("source*"):
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
+                if attempt < 4:
+                    time.sleep(min(2 * attempt, 8))
+        if last_error is not None or data is None:
+            raise last_error or RuntimeError("Bilibili download failed")
         source = _pick_source(task_dir)
         target = task_dir / f"audio.{fmt}"
         src_suffix = source.suffix.lower().lstrip(".")

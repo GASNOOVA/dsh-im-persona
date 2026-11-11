@@ -804,9 +804,9 @@ test('always voice mode turns every plain reply into a voice note', async () => 
 test('a quoted cover command downloads the Bilibili video and sends the cover file', async () => {
   const home = await mkdtemp(join(tmpdir(), 'wechat-personal-cover-'));
   try {
-    const coverText = '翻唱 https://www.bilibili.com/video/BV1xx411c7mD 温柔一点';
+    const coverText = '来翻唱一下这首歌 温柔一点';
     const messages = [
-      { id: 'msg-cover', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: coverText, quote: { direction: 'outgoing', senderId: OWN_ID, serverId: '1' }, createdAt: '2026-11-10T06:05:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+      { id: 'msg-cover', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 49, body: coverText, quote: { direction: 'incoming', senderId: SENDER_ID, serverId: '1', embeddedText: '[Link] 雨爱 https://b23.tv/qTRQCgV' }, createdAt: '2026-11-10T06:05:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
     ];
     const client = fakeClient({ messages });
     client.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-cover', direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
@@ -836,7 +836,7 @@ test('a quoted cover command downloads the Bilibili video and sends the cover fi
       await bridge.start();
       await waitFor(() => client.files.length === 1, 'cover file should be sent');
       assert.equal(requests.length, 1);
-      assert.equal(requests[0].url, 'https://www.bilibili.com/video/BV1xx411c7mD');
+      assert.equal(requests[0].url, 'https://b23.tv/qTRQCgV');
       assert.equal(requests[0].mix, false);
       assert.match(requests[0].prompt, /温柔一点/u);
       assert.equal(client.uploads.length, 1);
@@ -844,6 +844,55 @@ test('a quoted cover command downloads the Bilibili video and sends the cover fi
       assert.deepEqual(client.files[0], { threadId: GROUP_ID, sourceId: 'upload-1' });
       await waitFor(() => client.sent.length >= 1, 'ack text should be sent');
       assert.ok(client.sent.some((item) => item.text.includes('翻唱')));
+    } finally {
+      await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+
+test('a cover command can use the most recent Bilibili link in the chat', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-cover-recent-'));
+  try {
+    const messages = [
+      { id: 'msg-link', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: 'https://www.bilibili.com/video/BV1xx411c7mD', createdAt: '2026-11-10T06:04:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+      { id: 'msg-cover', threadId: GROUP_ID, direction: 'incoming', senderId: SENDER_ID, senderName: 'Zach', type: 1, body: '给我翻唱一下 温柔一点', createdAt: '2026-11-10T06:05:00+00:00', mentions: { all: false, self: false, state: 'known', userIds: [] } },
+    ];
+    const client = fakeClient({ messages });
+    client.events = [
+      { id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: 'msg-link', direction: 'incoming' } },
+      { id: '2', cursor: '2', kind: 'message.committed', payload: { messageId: 'msg-cover', direction: 'incoming' } },
+    ];
+    const requests = [];
+    const cover = {
+      maxPromptChars: 300,
+      client: {
+        fetchCover: async (request) => {
+          requests.push(request);
+          return { bytes: new Uint8Array([1, 2, 3]), format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD' };
+        },
+      },
+    };
+    const bridge = new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '不应调用模型',
+      resolvePersona: async () => null,
+      cover,
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    try {
+      await bridge.start();
+      await waitFor(() => client.files.length === 1, 'cover file should be sent for the remembered link');
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].url, 'https://www.bilibili.com/video/BV1xx411c7mD');
+      assert.equal(requests[0].mix, false);
     } finally {
       await bridge.stop();
     }

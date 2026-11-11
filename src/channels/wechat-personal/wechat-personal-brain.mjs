@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 
 import { AMBIENT_REPLY_MAX_CHARS, SKIP_TOKEN } from '../shared/group-brain/group-context.mjs';
 import { OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS, offPeakSleepReplyText } from '../shared/off-peak.mjs';
-import { coverAckText, parseCoverCommand } from './cover-command.mjs';
+import { findBilibiliUrl, coverAckText, parseCoverCommand } from './cover-command.mjs';
 
 /** 单条回复的硬上限：微信文本消息远大于此，但刷屏保护仍然有价值。 */
 export const WECHAT_PERSONAL_MAX_REPLY_CHARS = 4_000;
@@ -36,8 +36,25 @@ export const WECHAT_PERSONAL_VOICE_MAX_CHUNKS = 4;
 export const WECHAT_PERSONAL_GROUP_CACHE_MS = 60_000;
 /** SSE 断线后的重连等待。 */
 export const WECHAT_PERSONAL_RECONNECT_MS = 3_000;
+/** 翻唱指令允许回溯的「最近 B 站链接」时间窗口（用户先发链接、再说翻唱）。 */
+export const WECHAT_PERSONAL_COVER_LINK_MEMORY_MS = 10 * 60_000;
 
 const CURSOR_DOCUMENT_VERSION = 1;
+
+/** 被引用消息里可用于解析的文本：链接卡片/文本消息/图片说明等。 */
+function quotedTextOf(quoted) {
+  if (!quoted || typeof quoted !== 'object') return '';
+  const candidates = [
+    quoted.embeddedText,
+    quoted.embeddedLink?.url,
+    quoted.embeddedLink?.title,
+    quoted.body,
+    quoted.text,
+  ];
+  return candidates
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join('\n');
+}
 
 function isGroupThreadId(value) {
   return typeof value === 'string' && value.endsWith('@chatroom');
@@ -111,6 +128,7 @@ export class WechatPersonalGroupBridge {
   #voiceMode = 'tag';
   #cover = null;
   #coverJobs = new Set();
+  #recentBilibiliUrls = new Map();
   #sleepReplyAt = new Map();
   #accountId;
   #ownUserId;
@@ -392,8 +410,10 @@ export class WechatPersonalGroupBridge {
     // 群成员回复机器人主动发言（含自动接话/主动发言）时，按一次「类 @」处理：
     // 打开同一个连续对话窗口，并直接回复这条消息；没人回复就自然回到静默。
     const quoted = message.quote ?? null;
+    const quotedText = quotedTextOf(quoted);
     const repliedToBot = quoted?.direction === 'outgoing' && quoted?.senderId === this.#ownUserId;
     const senderName = group.members.get(message.senderId) ?? textOf(message.senderId);
+    const messageAt = Number.isFinite(Date.parse(message.createdAt ?? '')) ? Date.parse(message.createdAt) : this.#now();
     const event = {
       chatId,
       groupName: group.name,
@@ -405,7 +425,7 @@ export class WechatPersonalGroupBridge {
       mentionedBot: addressed || repliedToBot,
       repliedToBot,
       quoted: Boolean(quoted),
-      at: Number.isFinite(Date.parse(message.createdAt ?? '')) ? Date.parse(message.createdAt) : this.#now(),
+      at: messageAt,
       kind: 'group',
     };
     let observed;
@@ -420,12 +440,28 @@ export class WechatPersonalGroupBridge {
       if (observed?.direct) await this.#sendSleepReply({ event, group });
       return;
     }
-    // 翻唱指令：引用一条消息 + 文本里带 B 站链接 + 「翻唱」关键词。
+    // 记录本群最近出现的 B 站链接：用户习惯先发/引用链接，再单独说「翻唱」。
+    const urlInMessage = findBilibiliUrl(text) || findBilibiliUrl(quotedText);
+    if (urlInMessage) {
+      this.#recentBilibiliUrls.set(chatId, { url: urlInMessage, at: event.at });
+    }
+
+    // 翻唱指令：文本带「翻唱」关键词，链接可来自正文、引用消息或最近 10 分钟内的群链接。
     // 命中后不进入普通回复流程：先回一条确认，再异步生成翻唱文件（长任务）。
-    const coverCommand = this.#cover && event.quoted
-      ? parseCoverCommand(text, { maxPromptChars: this.#cover.maxPromptChars })
-      : null;
+    let coverCommand = null;
+    if (this.#cover) {
+      const remembered = this.#recentBilibiliUrls.get(chatId);
+      const fallbackUrl = remembered && event.at - remembered.at <= WECHAT_PERSONAL_COVER_LINK_MEMORY_MS
+        ? remembered.url
+        : '';
+      coverCommand = parseCoverCommand(text, {
+        maxPromptChars: this.#cover.maxPromptChars,
+        quotedText,
+        fallbackUrl,
+      });
+    }
     if (coverCommand) {
+      this.#recentBilibiliUrls.delete(chatId);
       await this.#startCoverJob({ event, coverCommand });
       return;
     }

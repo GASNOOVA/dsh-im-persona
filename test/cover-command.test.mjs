@@ -41,6 +41,23 @@ test('parseCoverCommand extracts url, prompt and mix flag', () => {
   assert.equal(pure.prompt, '随便唱唱');
 });
 
+test('parseCoverCommand resolves the link from the quoted message or recent context', () => {
+  const quoted = parseCoverCommand('来翻唱一下这首歌 温柔一点', {
+    quotedText: '[Link] 雨爱 https://b23.tv/qTRQCgV',
+  });
+  assert.ok(quoted);
+  assert.equal(quoted.url, 'https://b23.tv/qTRQCgV');
+  assert.match(quoted.prompt, /温柔一点/u);
+
+  const recent = parseCoverCommand('给我翻唱一下', {
+    fallbackUrl: 'https://www.bilibili.com/video/BV1xx411c7mD',
+  });
+  assert.ok(recent);
+  assert.equal(recent.url, 'https://www.bilibili.com/video/BV1xx411c7mD');
+
+  assert.equal(parseCoverCommand('来翻唱一下这首歌', {}), null);
+});
+
 test('parseCoverCommand truncates prompts and rejects empty urls', () => {
   const long = '翻唱 https://www.bilibili.com/video/BV1xx411c7mD ' + 'a'.repeat(500);
   const command = parseCoverCommand(long, { maxPromptChars: 40 });
