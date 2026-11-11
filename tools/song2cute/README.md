@@ -8,6 +8,8 @@
 
 它是 dsh-im-persona 的配套工具，不参与 IM 机器人运行；机器人语音回复请见 [语音回复](../../docs/语音回复.md)。
 
+输入既可以是本地音频，也可以是 **B 站视频链接**（BV / av / b23.tv 短链）：链接会先用 yt-dlp + FFmpeg 提取为音频，存放在带 TTL 生命周期的临时目录中，再进入换声流程。
+
 ## 快速使用（运行时已安装）
 
 ```sh
@@ -16,6 +18,9 @@
 
 # 换声 + 混音（额外输出 <name>-cover.wav）
 ~/feiyu-voice-lite/bin/song2cute song.wav -o ~/feiyu-voice-lite/out --mode both --name demo
+
+# 直接给 B 站链接（下载→分离→换声→混音）
+~/feiyu-voice-lite/bin/song2cute "https://www.bilibili.com/video/BV1xx411c7mD" -o ~/feiyu-voice-lite/out --mode both
 ```
 
 参数：
@@ -24,7 +29,7 @@
 | --- | --- | --- |
 | `-o, --out-dir` | 必填 | 输出目录 |
 | `--mode` | `both` | `vocals`（只做换声，不生成混音）/ `cover` 或 `both`（额外生成 `<name>-cover.wav`） |
-| `--name` | 输入文件名 | 输出文件前缀 |
+| `--name` | 输入文件名 / B 站 BV 号 | 输出文件前缀 |
 | `--pitch` | `0` | RVC 变调半音数 |
 | `--index-rate` | `0.5` | RVC 索引混合比例 |
 | `--protect` | `0.25` | 保护清辅音/气声 |
@@ -34,10 +39,56 @@
 | `--vocal-gain-db` | `0` | 混音时人声增益 |
 | `--pause-voice-api` | 关 | 转换前停掉 GPT-SoVITS voice API，转换后重启（4GB 显存必备） |
 | `--keep-work` | 关 | 保留中间文件 |
+| `--bili-ttl-hours` | `BILI_TEMP_TTL_HOURS` 或 `6` | B 站下载文件的临时保留小时数 |
+| `--bili-temp-root` | `BILI_TEMP_DIR` 或 `<运行时>/tmp/bili` | B 站下载文件的临时目录 |
 
 输出：`<name>-vocals.wav`（分离人声）、`<name>-instrumental.wav`（伴奏）、`<name>-vocals-cute.wav`（换声人声，40 kHz）、`<name>-cover.wav`（混音，44.1 kHz 立体声）。
 
 > 换声质量取决于 RVC 目标模型与参数；`--pitch 0 --index-rate 0.5 --protect 0.25 --volume-envelope 0.3` 是当前 1050 Ti 上验证过、与原版 F0/亮度最接近的一组默认值。
+
+## B 站视频链接直出（临时文件生命周期）
+
+`bili_audio.py` 参考 [BiliMusicDownloader](https://github.com/c0sc0s/BiliMusicDownloader)（MIT）的提取流程重写为 Linux 无头版本：yt-dlp 下载 `bestaudio`，FFmpeg 转成 WAV/MP3/M4A。每次提取创建一个独立任务目录：
+
+```text
+~/feiyu-voice-lite/tmp/bili/<taskId>/
+├── task.json      # 元数据：来源 URL、标题、时长、TTL、状态、文件与字节数
+└── audio.wav      # 提取结果（默认 wav；可 --format mp3/m4a）
+```
+
+生命周期规则：
+
+- 默认 TTL **6 小时**（`BILI_TEMP_TTL_HOURS` 可改）；到期后由清理流程删除；
+- 存储预算默认 **8 GiB / 200 个任务**（`BILI_TEMP_MAX_GB`、`BILI_TEMP_MAX_ENTRIES`），超出时按最近访问时间 LRU 淘汰；
+- 每次 `bili-audio extract` 与每次 `song2cute` 运行开始/结束都会自动执行一次 cleanup；
+- 正在被 `song2cute` 使用的任务会临时 pin 住，不会被并发清理误删；
+- 失败的任务也会保留到 TTL 便于排查，但同样计入预算。
+
+独立使用：
+
+```sh
+cd ~/feiyu-voice-lite
+./bin/bili-audio extract "https://www.bilibili.com/video/BV1xx411c7mD" --json   # 提取（默认 wav）
+./bin/bili-audio extract "https://b23.tv/xxxx" --format mp3 --ttl-hours 12 --json
+./bin/bili-audio info "https://www.bilibili.com/video/BV1xx411c7mD" --json        # 只看元数据/时长
+./bin/bili-audio list                                                            # 当前临时任务
+./bin/bili-audio cleanup --json                                                  # 手动清理过期/超预算任务
+```
+
+环境变量：`BILI_TEMP_DIR`（临时根目录）、`BILI_TEMP_TTL_HOURS`、`BILI_TEMP_MAX_GB`、`BILI_TEMP_MAX_ENTRIES`、`FFMPEG_PATH`（FFmpeg 可执行文件，默认用 `<运行时>/bin/ffmpeg` 或 PATH）。
+
+需要安装：
+
+```sh
+cd ~/feiyu-voice-lite
+uv pip install --python .venv/bin/python "yt-dlp>=2024.1"
+# 无系统 ffmpeg 时下载静态版（johnvansickle）：
+mkdir -p bin && curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+  | tar -xJ --strip-components=1 -C /tmp/ffmpeg-static
+cp /tmp/ffmpeg-static/ffmpeg /tmp/ffmpeg-static/ffprobe bin/ && chmod +x bin/ffmpeg bin/ffprobe
+```
+
+> B 站部分视频会返回 `HTTP Error 567`（风控/地区/已删除），属正常现象；换一个视频或稍后重试。下载为 `bestaudio`，不会保存视频画面。
 
 ## 安装（可迁移部署指南）
 
@@ -47,13 +98,16 @@
 
 ```text
 ~/feiyu-voice-lite/            # 运行时根目录（可用 SONG2CUTE_HOME 覆盖）
-├── .venv/                     # Python 3.11 虚拟环境（torch / demucs / librosa ...）
+├── .venv/                     # Python 3.11 虚拟环境（torch / demucs / librosa / yt-dlp ...）
 ├── server/                    # 从 astrbot_plugin_feiyu_voice/server 复制
 ├── source/                    # Applio 源码（固定 commit + compat overlay + RVC 资产）
 ├── package/                   # FeiyuVoice-RVC 模型包
 ├── profile.json               # RVC 运行时配置（make-profile.py 生成）
-├── song2cute.py               # 本工具（从本仓库复制）
-└── bin/song2cute              # wrapper
+├── song2cute.py               # 歌曲换声/翻唱工具（从本仓库复制）
+├── bili_audio.py              # B 站视频→音频提取（从本仓库复制）
+├── temp_store.py              # 临时文件 TTL 生命周期管理
+├── tmp/bili/                  # B 站下载的临时任务目录（自动清理）
+└── bin/song2cute, bin/bili-audio, bin/ffmpeg, bin/ffprobe
 ```
 
 ### 1. 安装 uv 与 Python 3.11（用户态）
@@ -76,6 +130,7 @@ uv pip install --python .venv/bin/python \
   --index-url https://download.pytorch.org/whl/cu126 \
   torch==2.7.1+cu126 torchaudio==2.7.1+cu126
 uv pip install --python .venv/bin/python "demucs==4.0.1"
+uv pip install --python .venv/bin/python "yt-dlp>=2024.1"   # B 站链接输入需要
 .venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
@@ -164,10 +219,19 @@ PY
 ### 6. 放工具本体
 
 ```sh
-cp /path/to/dsh-im-persona/tools/song2cute/song2cute.py ~/feiyu-voice-lite/song2cute.py
-mkdir -p ~/feiyu-voice-lite/bin
-cp /path/to/dsh-im-persona/tools/song2cute/bin/song2cute ~/feiyu-voice-lite/bin/song2cute
-chmod +x ~/feiyu-voice-lite/bin/song2cute
+cd ~/feiyu-voice-lite
+cp /path/to/dsh-im-persona/tools/song2cute/song2cute.py .
+cp /path/to/dsh-im-persona/tools/song2cute/bili_audio.py .
+cp /path/to/dsh-im-persona/tools/song2cute/temp_store.py .
+mkdir -p bin
+cp /path/to/dsh-im-persona/tools/song2cute/bin/song2cute bin/song2cute
+cp /path/to/dsh-im-persona/tools/song2cute/bin/bili-audio bin/bili-audio
+chmod +x bin/song2cute bin/bili-audio
+
+# B 站下载还需要 FFmpeg；无系统 ffmpeg 时使用静态版：
+curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+  | tar -xJ --strip-components=1 -C /tmp/ffmpeg-static
+cp /tmp/ffmpeg-static/ffmpeg /tmp/ffmpeg-static/ffprobe bin/ && chmod +x bin/ffmpeg bin/ffprobe
 ```
 
 ### 7. 验证
@@ -189,6 +253,10 @@ ls -l /tmp/s2c-test
 | `transformers ... torch>=2.6` | 重新安装 torch 2.7.1+cu126（第 2 步） |
 | `libsndfile` / soundfile 报错 | `sudo apt-get install -y libsndfile1`（或使用带 libsndfile 的 conda 环境） |
 | Demucs 很慢/显存不足 | `--device cpu`（慢但稳），或降低 `--chunk` |
+| B 站下载 `HTTP Error 567` | 该视频被风控/区域限制或已删除；换视频或稍后重试 |
+| `yt-dlp is not installed` | `uv pip install --python .venv/bin/python "yt-dlp>=2024.1"` |
+| `ffmpeg is required` / 找不到 ffmpeg | 放到 `<运行时>/bin/ffmpeg`，或设 `FFMPEG_PATH` |
+| 临时目录占用过大 | `./bin/bili-audio cleanup --json`；或调小 `BILI_TEMP_MAX_GB` / `BILI_TEMP_TTL_HOURS` |
 
 ## 迁移到新机器
 
@@ -200,5 +268,7 @@ ls -l /tmp/s2c-test
 ## 许可与使用边界
 
 - 工具代码随本仓库（MIT）。
+- B 站音频提取流程参考 [BiliMusicDownloader](https://github.com/c0sc0s/BiliMusicDownloader)（MIT, Copyright (c) 2024 c0sc0s），其通过 yt-dlp + FFmpeg 提取 B 站音频的思路被用于 `bili_audio.py`；无头/Linux 实现、TTL 临时文件管理与 song2cute 集成由本仓库编写。
+- `yt-dlp`、FFmpeg 各自遵循其上游许可。
 - FeiyuVoice-RVC 模型包、ContentVec、RMVPE、Applio 各有自己的许可与使用条款，见模型包内 `NOTICE.md` / `COPYRIGHT.md` / `Applio_CODE_LICENSE.txt`；仅供个人、本地、非商业用途。
 - 歌曲人声与伴奏的使用需自行确保授权；本工具不下载受版权保护的歌曲。

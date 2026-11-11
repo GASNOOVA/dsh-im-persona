@@ -57,7 +57,13 @@ uv python install 3.11.17
 sudo apt-get install -y ffmpeg libsndfile1 libsox-dev build-essential python3-dev
 ```
 
-没有 sudo 时：`soundfile` 的 wheel 自带 libsndfile，可正常工作；`ffmpeg` 只在需要 mp3/m4a 等输入时才用到（wav 不需要）。
+没有 sudo 时：`soundfile` 的 wheel 自带 libsndfile，可正常工作；`ffmpeg` 只在需要 mp3/m4a 等输入、或 B 站链接提取时才用到（wav 不需要）。无系统 ffmpeg 时可下载静态版放到 `~/feiyu-voice-lite/bin/ffmpeg`（见 `tools/song2cute/README.md`）。
+
+B 站链接输入还需要 yt-dlp：
+
+```sh
+uv pip install --python ~/feiyu-voice-lite/.venv/bin/python "yt-dlp>=2024.1"
+```
 
 ## 3. 服务 A：song2cute（Demucs + RVC，离线）
 
@@ -68,7 +74,7 @@ cd ~/feiyu-voice-lite
 uv venv --python 3.11.17 .venv
 uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu126 \
   torch==2.7.1+cu126 torchaudio==2.7.1+cu126
-uv pip install --python .venv/bin/python "demucs==4.0.1"
+uv pip install --python .venv/bin/python "demucs==4.0.1" "yt-dlp>=2024.1"
 
 # 从仓库复制 server/、source/（Applio + overlay + 资产）、package/、profile、工具本体
 # 并运行：
@@ -80,6 +86,17 @@ python3 make-profile.py --runtime-home ~/feiyu-voice-lite
 ```sh
 ~/feiyu-voice-lite/bin/song2cute /path/to/song.wav -o /tmp/s2c --mode both
 ```
+
+B 站视频链接直出（yt-dlp + FFmpeg，参考 BiliMusicDownloader 的提取流程）：
+
+```sh
+~/feiyu-voice-lite/bin/song2cute "https://www.bilibili.com/video/BV1xx411c7mD" \
+  -o ~/feiyu-voice-lite/out --mode both
+~/feiyu-voice-lite/bin/bili-audio list
+~/feiyu-voice-lite/bin/bili-audio cleanup --json
+```
+
+临时文件生命周期：提取结果放在 `~/feiyu-voice-lite/tmp/bili/<taskId>/`，每个任务有 `task.json` 元数据；默认 TTL 6 小时、预算 8 GiB / 200 个任务，超出或过期时自动删除；`song2cute` 每次运行前后都会 cleanup。可用 `BILI_TEMP_TTL_HOURS`、`BILI_TEMP_MAX_GB`、`BILI_TEMP_MAX_ENTRIES`、`BILI_TEMP_DIR` 调整。
 
 ## 4. 服务 B：GPT-SoVITS 语音克隆（实验性，未接入插件）
 
@@ -232,14 +249,15 @@ curl -s http://127.0.0.1:9850/docs -o /dev/null -w '%{http_code}\n'
 
 ## 8. 迁移与恢复（可迁移性清单）
 
-- **可以复制**：`server/`、`source/`（含资产）、`package/`、`profile.json`（需改路径）、模型目录、`song2cute.py`、`bin/song2cute`、歌曲输出目录。
-- **不能复制**：`.venv`（绝对路径 + 平台相关），必须在新机器按第 2–4 节重建；`~/.cache/torch` 的 Demucs 权重可重下。
+- **可以复制**：`server/`、`source/`（含资产）、`package/`、`profile.json`（需改路径）、模型目录、`song2cute.py`、`bili_audio.py`、`temp_store.py`、`bin/song2cute`、`bin/bili-audio`、`bin/ffmpeg`/`bin/ffprobe`、歌曲输出目录。
+- **不能复制**：`.venv`（绝对路径 + 平台相关），必须在新机器按第 2–4 节重建；`~/.cache/torch` 的 Demucs 权重可重下；`tmp/bili/` 的临时任务无需迁移。
 - **新机器路径变化**：重新运行 `python3 make-profile.py --runtime-home <新根目录>`，并重新打 `rvc.py` 的 `FEIYU_RVC_PARAMS` 覆盖补丁（若复制的是已打补丁版本则跳过）。
 - **插件侧**：
   - song2cute 与插件无关；
   - feiyu 语音回复：更新 `wechatPersonal.voice.serviceUrl` 与新机器 IP/端口、`apiKeyPath`；
   - agent-wechat daemon 由插件自动拉起，`wechatPersonal.tokenPath` 指向新机器上的 token 文件。
 - **环境变量**（song2cute）：`SONG2CUTE_HOME`（运行时根目录，默认 `~/feiyu-voice-lite`）、`SONG2CUTE_VOICE_API_DIR`、`SONG2CUTE_VOICE_API_YAML`、`SONG2CUTE_VOICE_API_PORT`。
+- **环境变量**（B 站提取）：`BILI_TEMP_DIR`（临时根目录，默认 `<运行时>/tmp/bili`）、`BILI_TEMP_TTL_HOURS`（默认 6）、`BILI_TEMP_MAX_GB`（默认 8）、`BILI_TEMP_MAX_ENTRIES`（默认 200）、`FFMPEG_PATH`。
 - **记录**：换机后对比 `nvidia-smi`、torch 版本、首次转换耗时，异常时优先怀疑驱动/版本（Pascal 必须 ≤2.7.x、CUDA 12.6 wheel）。
 
 ## 9. 常见问题
@@ -254,8 +272,12 @@ curl -s http://127.0.0.1:9850/docs -o /dev/null -w '%{http_code}\n'
 | RVC `Package integrity check failed` | 改动了 `package/` 或 `source/`；不要编辑包内文件，重新下载 |
 | GPT-SoVITS 合成出参考音内容 | 参考音与 `prompt_text` 不一致；重新转录/对齐 |
 | 显存 4GB 卡首条语音很慢 | v2Pro 首次含 CUDA graph 编译；预热即可 |
+| B 站 `HTTP Error 567` | 视频被风控/区域限制/已删除；换视频或稍后重试 |
+| `yt-dlp is not installed` | `uv pip install --python .venv/bin/python "yt-dlp>=2024.1"` |
+| 临时目录占用过大 | `bin/bili-audio cleanup --json`；调小 `BILI_TEMP_MAX_GB` / `BILI_TEMP_TTL_HOURS` |
 
 ## 10. 许可与使用边界
 
 - 本仓库代码 MIT；FeiyuVoice / Applio / ContentVec / RMVPE / GPT-SoVITS 模型与代码各有独立许可，见各自仓库与模型包 `NOTICE.md`、`COPYRIGHT.md`。
+- B 站提取流程参考 BiliMusicDownloader（MIT, c0sc0s）；yt-dlp、FFmpeg 遵循各自上游许可。
 - 只用于个人、本地、非商业用途；克隆/翻唱他人声音与歌曲前，请自行确认授权与当地法律要求。

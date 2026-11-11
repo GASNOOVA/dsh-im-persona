@@ -13,6 +13,11 @@ SONG2CUTE_VOICE_API_PORT.  See tools/song2cute/README.md for setup.
 
 Run with the feiyu-voice-lite venv, e.g.:
   ~/feiyu-voice-lite/bin/song2cute song.wav -o out --mode both
+  ~/feiyu-voice-lite/bin/song2cute "https://www.bilibili.com/video/BV1xx411c7mD" -o out --mode both
+
+``input`` may also be a Bilibili video URL (BV/av/b23.tv).  In that case the
+audio is downloaded first with :mod:`bili_audio` into a TTL-managed temporary
+directory (default 6 hours), then fed through the normal pipeline.
 """
 from __future__ import annotations
 
@@ -29,6 +34,9 @@ from pathlib import Path
 import numpy as np
 import librosa
 import soundfile as sf
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bili_audio  # noqa: E402  (local helper; also used by bin/bili-audio)
 
 BASE = Path(os.environ.get("SONG2CUTE_HOME") or (Path.home() / "feiyu-voice-lite")).expanduser().resolve()
 VENV_PY = BASE / ".venv" / "bin" / "python"
@@ -263,7 +271,7 @@ def cover_mix(vocals: Path, inst: Path, cute: Path, out_path: Path,
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Separate a song, convert the vocal to the 大肥鱼 cute timbre, optionally mix a cover.")
-    ap.add_argument("input", help="input audio (wav/flac/mp3/...)")
+    ap.add_argument("input", help="input audio (wav/flac/mp3/...) or a Bilibili video URL (BV/av/b23.tv)")
     ap.add_argument("-o", "--out-dir", required=True, help="output directory")
     ap.add_argument("--mode", choices=["vocals", "cover", "both"], default="both")
     ap.add_argument("--name", default=None, help="output basename (default: input stem)")
@@ -277,6 +285,10 @@ def main(argv=None):
     ap.add_argument("--vocal-gain-db", type=float, default=0.0, help="vocal gain in final mix")
     ap.add_argument("--pause-voice-api", action="store_true", help="stop GPT-SoVITS api_v2.py to free VRAM (restarted afterwards)")
     ap.add_argument("--keep-work", action="store_true", help="keep intermediate chunks")
+    ap.add_argument("--bili-ttl-hours", type=float, default=None,
+                    help="TTL for a downloaded Bilibili source (default: BILI_TEMP_TTL_HOURS or 6)")
+    ap.add_argument("--bili-temp-root", default=None,
+                    help="temporary store root for Bilibili downloads (default: <runtime>/tmp/bili)")
     args = ap.parse_args(argv)
 
     runtime_missing = [str(p) for p in (VENV_PY, RVC_SERVER, RVC_PACKAGE, RVC_PROFILE) if not p.exists()]
@@ -287,12 +299,33 @@ def main(argv=None):
             "See tools/song2cute/README.md (or SONG2CUTE_HOME) for the installation guide."
         )
 
-    src = Path(args.input).expanduser().resolve()
+    bili_url = bili_audio.find_bilibili_url(args.input)
+    if bili_url:
+        bili_audio.cleanup(root=args.bili_temp_root)
+        log(f"[bili] extracting audio: {bili_url}")
+        try:
+            bili_result = bili_audio.extract(
+                bili_url,
+                fmt="wav",
+                ttl_hours=args.bili_ttl_hours,
+                root=args.bili_temp_root,
+            )
+        except Exception as exc:
+            raise SystemExit(f"Bilibili audio extraction failed: {type(exc).__name__}: {exc}")
+        src = Path(bili_result["audioPath"]).expanduser().resolve()
+        default_name = bili_result.get("bvid") or (bili_result.get("title") or "bilibili-audio")
+        default_name = "".join(ch for ch in str(default_name) if ch.isalnum() or ch in "-_")[:80] or "bilibili-audio"
+        log(f"[bili] audio ready: {src} "
+            f"({bili_result.get('bytes', 0) / (1024 * 1024):.1f} MiB, expires "
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(bili_result.get('expiresAt') or 0))})")
+    else:
+        src = Path(args.input).expanduser().resolve()
+        default_name = src.stem
     if not src.exists():
         raise SystemExit(f"input not found: {src}")
     out_dir = Path(args.out_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    name = args.name or src.stem
+    name = args.name or default_name
     work = out_dir / "work"
     if work.exists():
         shutil.rmtree(work)
@@ -328,6 +361,10 @@ def main(argv=None):
             restart_voice_api()
         if not args.keep_work and work.exists():
             shutil.rmtree(work, ignore_errors=True)
+        try:
+            bili_audio.cleanup(root=args.bili_temp_root)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

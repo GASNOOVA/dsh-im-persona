@@ -16,6 +16,14 @@ QQ messaging and command handling depend at runtime on Tencent Connect's [`@tenc
 
 内置人设「大肥鱼」的角色设定正文整合自 [`dsh-persona-dafeiyu`](https://github.com/huaizhuanghub/dsh-persona-dafeiyu)（`BUNDLED_DAFEIYU` 常量），该项目以 MIT License 发布，Copyright (c) 2026 dsh-persona-dafeiyu contributors。正文按原样收录于本仓库 `src/channels/shared/persona-presets.mjs`；本仓库未复制该项目的其余代码。
 
+## GPU 声音工具（`tools/song2cute`，可选、不在 npm 包里）
+
+`tools/song2cute` 是独立于插件的离线脚本，运行时需要用户自行安装 GPU 环境与模型，本仓库不打包这些内容：
+
+- B 站视频音频提取流程参考 [`BiliMusicDownloader`](https://github.com/c0sc0s/BiliMusicDownloader)（MIT License, Copyright (c) 2024 c0sc0s）的 yt-dlp + FFmpeg 实现；本仓库的 Linux 无头版本、TTL 临时文件管理与 song2cute 集成代码由本仓库编写。
+- 运行时依赖 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp)（Unlicense）、FFmpeg（LGPL/GPL，取决于构建）与 [Demucs](https://github.com/adefossez/demucs)（MIT）由用户自行安装。
+- FeiyuVoice-RVC 模型包、ContentVec、RMVPE、Applio 与 GPT-SoVITS 各有自己的许可与使用条款；详见 `<daemon 目录>`/模型包内 `NOTICE.md`、`COPYRIGHT.md` 或上游仓库，仅供个人、本地、非商业用途。
+
 ## 其它运行时依赖
 
 This package depends at runtime on [`qrcode`](https://github.com/soldair/node-qrcode) 1.5.4 and [`undici`](https://github.com/nodejs/undici) 7.30.1, both licensed under the MIT License. [`sharp`](https://github.com/lovell/sharp) 0.35.5 is an optional dependency (Apache-2.0) used for local image preprocessing when available; it is installed separately and not bundled.
