@@ -13,6 +13,14 @@ import { dirname, join } from 'node:path';
 import { AMBIENT_REPLY_MAX_CHARS, SKIP_TOKEN } from '../shared/group-brain/group-context.mjs';
 import { OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS, offPeakSleepReplyText } from '../shared/off-peak.mjs';
 import { findBilibiliUrl, parseCoverCommand } from './cover-command.mjs';
+import {
+  coverAcceptedReply,
+  coverFailedReply,
+  muteAckReply,
+  voiceModeOffReply,
+  voiceModeOnReply,
+  voiceUnavailableReply,
+} from '../shared/auto-replies.mjs';
 
 /** 单条回复的硬上限：微信文本消息远大于此，但刷屏保护仍然有价值。 */
 export const WECHAT_PERSONAL_MAX_REPLY_CHARS = 4_000;
@@ -655,17 +663,17 @@ export class WechatPersonalGroupBridge {
   async #applyControlInstruction({ instruction, event }) {
     if (instruction.kind === 'mute') {
       this.#mutedFollowUps.add(event.chatId);
-      await this.#sendControlAck(event, '好，这个窗口里我先不自动接话了；下次 @ 我再继续。');
+      await this.#sendControlAck(event, muteAckReply());
       return;
     }
     if (!this.#voice) {
-      await this.#sendControlAck(event, '当前没有可用的语音服务，语音回复保持关闭。');
+      await this.#sendControlAck(event, voiceUnavailableReply());
       return;
     }
     const current = this.#isVoiceChatEnabled(event.chatId);
     const next = instruction.action === 'on' ? true : instruction.action === 'off' ? false : !current;
     this.#voiceOverrides.set(event.chatId, next);
-    await this.#sendControlAck(event, next ? '语音模式已开启。' : '语音模式已关闭，之后改用文字回复。');
+    await this.#sendControlAck(event, next ? voiceModeOnReply() : voiceModeOffReply());
   }
 
   async #sendControlAck(event, text) {
@@ -755,8 +763,19 @@ export class WechatPersonalGroupBridge {
     return { sent: true, remaining: '' };
   }
 
-  /** 翻唱指令：接受后不自动回复，异步生成文件；失败回一条文字说明。 */
+  /** 翻唱指令：先回一条简短确认（避免刷频），异步生成文件；失败回一条文字说明。 */
   async #startCoverJob({ event, coverCommand }) {
+    const ack = coverAcceptedReply({ mix: coverCommand.mix });
+    try {
+      await this.#client.sendText({
+        threadId: event.chatId,
+        text: ack,
+        ...(event.mentionedBot ? { mentions: { userIds: [event.senderId] } } : {}),
+      });
+      await this.#recordBotMessage({ chatId: event.chatId, text: ack, groupName: event.groupName });
+    } catch (error) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] cover ack failed:', error?.message ?? error);
+    }
     const controller = new AbortController();
     this.#coverJobs.add(controller);
     void (async () => {
@@ -770,7 +789,7 @@ export class WechatPersonalGroupBridge {
         await this.#sendCoverResult({ event, result });
       } catch (error) {
         if (controller.signal.aborted) return;
-        const message = `翻唱失败：${String(error?.message ?? error).slice(0, 300)}`;
+        const message = coverFailedReply(String(error?.message ?? error).slice(0, 300));
         this.#logger.warn?.('[dsh-im:wechat-personal] cover job failed:', error?.message ?? error);
         try {
           await this.#client.sendText({ threadId: event.chatId, text: message });
@@ -798,10 +817,8 @@ export class WechatPersonalGroupBridge {
     const sourceId = typeof upload?.id === 'string' ? upload.id : '';
     if (!sourceId) throw new Error('翻唱文件上传未返回 id');
     await this.#client.sendFile({ threadId: event.chatId, sourceId });
+    // 不再额外发「翻唱完成」文字，避免刷频；文件本身就是结果，只在群记忆里留一条记录。
     const label = result?.mix === true ? '混音版' : '纯人声版';
-    const seconds = Number.isFinite(result?.durationSeconds) ? `，约 ${Math.round(result.durationSeconds)} 秒` : '';
-    const caption = `翻唱完成：${title}（${label}${seconds}）`;
-    await this.#client.sendText({ threadId: event.chatId, text: caption });
     await this.#recordBotMessage({ chatId: event.chatId, text: `[翻唱] ${title}（${label}）`, groupName: event.groupName });
   }
 

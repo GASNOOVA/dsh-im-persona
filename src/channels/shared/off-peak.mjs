@@ -10,7 +10,7 @@
  * 表内置 2026、2027 两年；后续年份可在设置页点击「同步节假日」，从
  * holiday-cn（由国务院通知生成）手动同步并持久化到本机设置文件。
  */
-import { t } from './i18n.mjs';
+import { sleepReplyText } from './auto-replies.mjs';
 
 export const BEIJING_UTC_OFFSET_MINUTES = 8 * 60;
 
@@ -206,7 +206,7 @@ export function offPeakStatus(settings = DEFAULT_OFF_PEAK_SETTINGS, now = new Da
 export const OFF_PEAK_SLEEP_REPLY_MIN_INTERVAL_MS = 5 * 60_000;
 
 export function offPeakSleepReplyText() {
-  return t('大肥鱼正在睡觉中，暂时没法回复消息，等空闲时段再来找我吧～');
+  return sleepReplyText();
 }
 
 /** 入站消息是否应被静默丢弃：仅当开关开启且当前处于高峰时段。 */

@@ -842,7 +842,8 @@ test('a quoted cover command downloads the Bilibili video and sends the cover fi
       assert.equal(client.uploads.length, 1);
       assert.equal(client.uploads[0].mediaType, 'audio/mpeg');
       assert.deepEqual(client.files[0], { threadId: GROUP_ID, sourceId: 'upload-1' });
-      assert.ok(!client.sent.some((item) => item.text.includes('收到翻唱请求')), 'accepting a cover command must stay silent');
+      assert.ok(client.sent.some((item) => item.text.includes('翻唱请求')), 'a short ack should be sent');
+      assert.ok(!client.sent.some((item) => item.text.includes('翻唱完成')), 'no completion caption should be sent');
     } finally {
       await bridge.stop();
     }
@@ -936,7 +937,7 @@ test('the #语音模式 injected command toggles voice replies for the chat', as
       await waitFor(() => client.sent.length >= 2, 'control ack and text reply should be sent');
       assert.equal(synthesized.length, 0);
       assert.equal(client.voices.length, 0);
-      assert.ok(client.sent.some((item) => item.text.includes('语音模式已关闭')));
+      assert.ok(client.sent.some((item) => item.text.includes('文字模式')));
       assert.ok(client.sent.some((item) => item.text === '在的在的。'));
     } finally {
       await bridge.stop();
@@ -978,7 +979,7 @@ test('the #闭嘴 injected command pauses follow-ups until the next @ mention', 
       await bridge.start();
       await waitFor(() => client.sent.filter((item) => item.text === '好呀。').length === 2, 'direct reply and follow-up reply should be sent');
       assert.equal(prompts.length, 2);
-      assert.ok(client.sent.some((item) => item.text.includes('不自动接话')));
+      assert.ok(client.sent.some((item) => item.text.includes('安静听你们聊')));
       assert.ok(!prompts.some((prompt) => prompt.includes('刚刚说：\n继续聊呀')));
     } finally {
       await bridge.stop();
