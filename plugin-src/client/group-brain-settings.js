@@ -343,7 +343,10 @@ export function GroupBrainSettings({ rpcCall }) {
         style: voice.style,
       }), '声音服务测试失败。');
       if (mounted.current) {
-        setVoiceNotice(localizeTemplate('声音服务正常：已合成 {bytes} 字节 {style} 语音。', {
+        const tunnelChecked = result?.tunnel?.required === true;
+        setVoiceNotice(localizeTemplate(tunnelChecked
+          ? '声音服务正常（SSH 隧道已连通）：已合成 {bytes} 字节 {style} 语音。'
+          : '声音服务正常：已合成 {bytes} 字节 {style} 语音。', {
           bytes: result?.byteLength ?? 0,
           style: result?.style ?? 'cute',
         }));
@@ -360,11 +363,16 @@ export function GroupBrainSettings({ rpcCall }) {
     setCoverTesting(true); setCoverNotice(''); setError(null);
     try {
       const cover = draft?.wechatPersonal?.cover ?? DEFAULT_BRAIN_TEMPLATE.wechatPersonal.cover;
-      unwrap(await rpcCall(GROUP_BRAIN_ENDPOINTS.testCover, {
+      const result = unwrap(await rpcCall(GROUP_BRAIN_ENDPOINTS.testCover, {
         serviceUrl: cover.serviceUrl,
         apiKeyPath: cover.apiKeyPath,
       }), '翻唱服务测试失败。');
-      if (mounted.current) setCoverNotice('翻唱服务连接正常。');
+      if (mounted.current) {
+        const tunnelChecked = result?.tunnel?.required === true;
+        setCoverNotice(localizeTemplate(tunnelChecked
+          ? '翻唱服务连接正常（SSH 隧道已连通）。'
+          : '翻唱服务连接正常。'));
+      }
     } catch (caught) {
       if (mounted.current) setCoverNotice(caught.message);
     } finally {

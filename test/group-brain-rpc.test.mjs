@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { createServer } from 'node:net';
 import test from 'node:test';
 
 import {
   GROUP_BRAIN_ENDPOINTS,
   createGroupBrainRpcHandler,
+  probeTunnelEndpoint,
 } from '../plugin-src/host/group-brain-rpc.mjs';
 import { DEFAULT_GROUP_BRAIN_SETTINGS } from '../src/channels/shared/group-brain/group-brain-config.mjs';
 
@@ -176,6 +179,7 @@ test('group brain RPC tests the feiyu voice service with draft settings', async 
     listBrains: () => [],
     reloadBrains: async () => {},
     voiceClientClass: FakeVoiceClient,
+    tunnelProbe: async () => ({ required: true, reachable: true, host: '127.0.0.1', port: 9880 }),
   });
   const result = await handler(GROUP_BRAIN_ENDPOINTS.testVoice, {
     serviceUrl: 'http://127.0.0.1:9880',
@@ -185,6 +189,7 @@ test('group brain RPC tests the feiyu voice service with draft settings', async 
   assert.equal(result.ok, true);
   assert.equal(result.value.style, 'gentle');
   assert.equal(result.value.byteLength, 1234);
+  assert.deepEqual(result.value.tunnel, { required: true, reachable: true, host: '127.0.0.1', port: 9880 });
   assert.equal(calls[0].options.baseUrl, 'http://127.0.0.1:9880');
   assert.equal(calls[1].style, 'gentle');
 
@@ -204,6 +209,7 @@ test('group brain RPC tests the cover service with draft settings', async () => 
     listBrains: () => [],
     reloadBrains: async () => {},
     coverClientClass: FakeCoverClient,
+    tunnelProbe: async () => ({ required: true, reachable: true, host: '127.0.0.1', port: 9860 }),
   });
   const result = await handler(GROUP_BRAIN_ENDPOINTS.testCover, {
     serviceUrl: 'http://127.0.0.1:9860',
@@ -212,9 +218,93 @@ test('group brain RPC tests the cover service with draft settings', async () => 
   assert.equal(result.ok, true);
   assert.equal(result.value.serviceUrl, 'http://127.0.0.1:9860');
   assert.deepEqual(result.value.health, { status: 'ok' });
+  assert.deepEqual(result.value.tunnel, { required: true, reachable: true, host: '127.0.0.1', port: 9860 });
   assert.equal(calls[0].options.baseUrl, 'http://127.0.0.1:9860');
 
   const invalid = await handler(GROUP_BRAIN_ENDPOINTS.testCover, {});
   assert.equal(invalid.ok, false);
   assert.equal(invalid.error.code, 'bad-request');
+});
+
+test('group brain RPC reports a missing SSH tunnel before contacting the voice service', async () => {
+  const calls = [];
+  class FakeVoiceClient {
+    constructor(options) { calls.push({ kind: 'construct', options }); }
+    async speak() { calls.push({ kind: 'speak' }); return new Uint8Array(1); }
+  }
+  const handler = createGroupBrainRpcHandler({
+    store: fakeStore(),
+    listBrains: () => [],
+    reloadBrains: async () => {},
+    voiceClientClass: FakeVoiceClient,
+    tunnelProbe: async () => ({ required: true, reachable: false, host: '127.0.0.1', port: 9860 }),
+  });
+  const result = await handler(GROUP_BRAIN_ENDPOINTS.testVoice, {
+    serviceUrl: 'http://127.0.0.1:9860',
+    apiKeyPath: '',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'voice-tunnel-unreachable');
+  assert.match(result.error.message, /SSH 隧道/);
+  assert.match(result.error.message, /127\.0\.0\.1:9860/);
+  assert.deepEqual(calls, []);
+});
+
+test('group brain RPC reports a missing SSH tunnel before contacting the cover service', async () => {
+  const calls = [];
+  class FakeCoverClient {
+    constructor(options) { calls.push({ kind: 'construct', options }); }
+    async health() { calls.push({ kind: 'health' }); return { status: 'ok' }; }
+  }
+  const handler = createGroupBrainRpcHandler({
+    store: fakeStore(),
+    listBrains: () => [],
+    reloadBrains: async () => {},
+    coverClientClass: FakeCoverClient,
+    tunnelProbe: async () => ({ required: true, reachable: false, host: '127.0.0.1', port: 9860 }),
+  });
+  const result = await handler(GROUP_BRAIN_ENDPOINTS.testCover, {
+    serviceUrl: 'http://127.0.0.1:9860',
+    apiKeyPath: '',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'cover-tunnel-unreachable');
+  assert.match(result.error.message, /SSH 隧道/);
+  assert.match(result.error.message, /127\.0\.0\.1:9860/);
+  assert.deepEqual(calls, []);
+});
+
+test('probeTunnelEndpoint only checks loopback service URLs', async () => {
+  assert.deepEqual(await probeTunnelEndpoint('http://192.168.2.106:9860'), {
+    required: false, reachable: false, host: '192.168.2.106', port: 9860,
+  });
+  assert.deepEqual(await probeTunnelEndpoint('not a url'), {
+    required: false, reachable: false, host: '', port: 0,
+  });
+});
+
+test('probeTunnelEndpoint reports a listening local port as reachable', async (t) => {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  assert.deepEqual(await probeTunnelEndpoint(`http://127.0.0.1:${port}`), {
+    required: true, reachable: true, host: '127.0.0.1', port,
+  });
+  // localhost is normalized to the IPv4 loopback address.
+  assert.deepEqual(await probeTunnelEndpoint(`http://localhost:${port}`), {
+    required: true, reachable: true, host: 'localhost', port,
+  });
+});
+
+test('probeTunnelEndpoint reports a closed local port as unreachable', async () => {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  assert.deepEqual(await probeTunnelEndpoint(`http://127.0.0.1:${port}`, { timeoutMs: 500 }), {
+    required: true, reachable: false, host: '127.0.0.1', port,
+  });
 });

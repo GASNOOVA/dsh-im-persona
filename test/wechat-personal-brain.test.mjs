@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -18,6 +18,15 @@ async function waitFor(predicate, message, timeoutMs = 2_000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(message);
+}
+
+async function waitForAsync(predicate, message, timeoutMs = 2_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.fail(message);
@@ -814,10 +823,12 @@ test('a quoted cover command downloads the Bilibili video and sends the cover fi
     const cover = {
       maxPromptChars: 300,
       client: {
-        fetchCover: async (request) => {
+        submitCover: async (request) => {
           requests.push(request);
-          return { bytes: new Uint8Array([1, 2, 3]), format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD' };
+          return `job-cover-${requests.length}`;
         },
+        waitForJob: async () => ({ format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD', mix: false }),
+        downloadAudio: async () => new Uint8Array([1, 2, 3]),
       },
     };
     const bridge = new WechatPersonalGroupBridge({
@@ -841,7 +852,9 @@ test('a quoted cover command downloads the Bilibili video and sends the cover fi
       assert.match(requests[0].prompt, /温柔一点/u);
       assert.equal(client.uploads.length, 1);
       assert.equal(client.uploads[0].mediaType, 'audio/mpeg');
-      assert.deepEqual(client.files[0], { threadId: GROUP_ID, sourceId: 'upload-1' });
+      assert.equal(client.files[0].threadId, GROUP_ID);
+      assert.equal(client.files[0].sourceId, 'upload-1');
+      assert.equal(client.files[0].idempotencyKey, 'dsh-im-cover-job-cover-1');
       assert.ok(client.sent.some((item) => item.text.includes('翻唱请求')), 'a short ack should be sent');
       assert.ok(!client.sent.some((item) => item.text.includes('翻唱完成')), 'no completion caption should be sent');
     } finally {
@@ -869,10 +882,12 @@ test('a cover command can use the most recent Bilibili link in the chat', async 
     const cover = {
       maxPromptChars: 300,
       client: {
-        fetchCover: async (request) => {
+        submitCover: async (request) => {
           requests.push(request);
-          return { bytes: new Uint8Array([1, 2, 3]), format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD' };
+          return `job-cover-${requests.length}`;
         },
+        waitForJob: async () => ({ format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD', mix: false }),
+        downloadAudio: async () => new Uint8Array([1, 2, 3]),
       },
     };
     const bridge = new WechatPersonalGroupBridge({
@@ -1007,11 +1022,15 @@ test('voice replies fall back to text while a cover job is running', async () =>
     const cover = {
       maxPromptChars: 300,
       client: {
-        fetchCover: async (request) => {
+        submitCover: async (request) => {
           requests.push(request);
-          await pendingCover;
-          return { bytes: new Uint8Array([1, 2, 3]), format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD' };
+          return 'job-cover-busy';
         },
+        waitForJob: async () => {
+          await pendingCover;
+          return { format: 'mp3', title: '测试歌曲', durationSeconds: 30, bvid: 'BV1xx411c7mD', mix: false };
+        },
+        downloadAudio: async () => new Uint8Array([1, 2, 3]),
       },
     };
     const bridge = new WechatPersonalGroupBridge({
@@ -1083,6 +1102,95 @@ test('voice replies fall back to text when the remote voice service is unavailab
       assert.equal(client.sent[0].text, '在的在的。');
     } finally {
       await bridge.stop();
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('an in-flight cover job survives a bridge reload and is delivered after resume', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wechat-personal-cover-resume-'));
+  try {
+    const message = {
+      id: 'msg-cover-resume',
+      threadId: GROUP_ID,
+      direction: 'incoming',
+      senderId: SENDER_ID,
+      senderName: 'Zach',
+      type: 1,
+      body: '翻唱 https://b23.tv/qTRQCgV 温柔一点',
+      createdAt: '2026-11-10T06:30:00+00:00',
+      mentions: { all: false, self: false, state: 'known', userIds: [] },
+    };
+    const client1 = fakeClient({ messages: [message] });
+    client1.events = [{ id: '1', cursor: '1', kind: 'message.committed', payload: { messageId: message.id, direction: 'incoming', threadId: GROUP_ID, type: 1 } }];
+    let releaseWait = null;
+    const waiting = new Promise((resolve) => { releaseWait = resolve; });
+    const cover1 = {
+      maxPromptChars: 300,
+      client: {
+        submitCover: async () => 'job-resume-1',
+        waitForJob: async () => {
+          await waiting;
+          return { format: 'mp3', title: '恢复的翻唱', durationSeconds: 20, bvid: 'BV1xx411c7mD', mix: false };
+        },
+        downloadAudio: async () => new Uint8Array([9, 8, 7]),
+      },
+    };
+    const createBridge = (client, cover) => new WechatPersonalGroupBridge({
+      client,
+      brain: fakeBrain(),
+      generate: async () => '不应调用模型',
+      resolvePersona: async () => null,
+      cover,
+      accountId: 'xiaohao',
+      ownUserId: OWN_ID,
+      statePath: join(home, 'cursor.json'),
+      mergeWindowMs: 5,
+      logger: { warn() {}, info() {}, error() {} },
+    });
+    const bridge1 = createBridge(client1, cover1);
+    try {
+      await bridge1.start();
+      await waitFor(() => client1.sent.some((item) => item.text.includes('翻唱请求')), 'cover ack should be sent');
+      await waitForAsync(async () => {
+        try {
+          const document = JSON.parse(await readFile(join(home, 'xiaohao-cover-jobs.json'), 'utf8'));
+          return document.jobs.length === 1;
+        } catch {
+          return false;
+        }
+      }, 'cover job should be persisted before it completes');
+      const persisted = JSON.parse(await readFile(join(home, 'xiaohao-cover-jobs.json'), 'utf8'));
+      assert.equal(persisted.jobs[0].jobId, 'job-resume-1');
+      assert.equal(persisted.jobs[0].chatId, GROUP_ID);
+    } finally {
+      releaseWait?.();
+      await bridge1.stop();
+    }
+
+    // 模拟插件热重载：新实例接管持久化的任务，不重新提交，只补发文件。
+    const client2 = fakeClient({ messages: [] });
+    const cover2 = {
+      maxPromptChars: 300,
+      client: {
+        submitCover: async () => { throw new Error('resumed job must not be resubmitted'); },
+        waitForJob: async () => ({ format: 'mp3', title: '恢复的翻唱', durationSeconds: 20, bvid: 'BV1xx411c7mD', mix: false }),
+        downloadAudio: async () => new Uint8Array([9, 8, 7]),
+      },
+    };
+    const bridge2 = createBridge(client2, cover2);
+    try {
+      await bridge2.start();
+      await waitFor(() => client2.files.length === 1, 'resumed cover file should be sent');
+      assert.equal(client2.uploads[0].mediaType, 'audio/mpeg');
+      assert.equal(client2.files[0].idempotencyKey, 'dsh-im-cover-job-resume-1');
+      await waitForAsync(async () => {
+        const document = JSON.parse(await readFile(join(home, 'xiaohao-cover-jobs.json'), 'utf8'));
+        return document.jobs.length === 0;
+      }, 'completed cover job should be removed from the resume file');
+    } finally {
+      await bridge2.stop();
     }
   } finally {
     await rm(home, { recursive: true, force: true });

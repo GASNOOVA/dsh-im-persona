@@ -46,6 +46,10 @@ export const WECHAT_PERSONAL_GROUP_CACHE_MS = 60_000;
 export const WECHAT_PERSONAL_RECONNECT_MS = 3_000;
 /** 翻唱指令允许回溯的「最近 B 站链接」时间窗口（用户先发链接、再说翻唱）。 */
 export const WECHAT_PERSONAL_COVER_LINK_MEMORY_MS = 10 * 60_000;
+/** 翻唱任务状态文件版本。 */
+const COVER_JOBS_DOCUMENT_VERSION = 1;
+/** 插件重启后仍可恢复的翻唱任务最长存活时间；超过后放弃，避免补发过期文件。 */
+export const WECHAT_PERSONAL_COVER_JOB_RESUME_MAX_AGE_MS = 2 * 60 * 60_000;
 
 const CURSOR_DOCUMENT_VERSION = 1;
 
@@ -160,6 +164,7 @@ export class WechatPersonalGroupBridge {
   #voiceMode = 'tag';
   #cover = null;
   #coverJobs = new Set();
+  #pendingCoverJobs = new Map();
   #voiceOverrides = new Map();
   #mutedFollowUps = new Set();
   #recentBilibiliUrls = new Map();
@@ -167,6 +172,7 @@ export class WechatPersonalGroupBridge {
   #accountId;
   #ownUserId;
   #statePath;
+  #coverJobsPath;
   #logger;
   #now;
   #transcriptLimit;
@@ -194,6 +200,7 @@ export class WechatPersonalGroupBridge {
     accountId,
     ownUserId,
     statePath,
+    coverJobsPath = null,
     logger = console,
     now = () => Date.now(),
     transcriptLimit = WECHAT_PERSONAL_TRANSCRIPT_LIMIT,
@@ -212,10 +219,18 @@ export class WechatPersonalGroupBridge {
     this.#isSleeping = typeof isSleeping === 'function' ? isSleeping : null;
     this.#voice = voice && typeof voice.synthesize === 'function' ? voice : null;
     this.#voiceMode = voice?.mode === 'always' ? 'always' : 'tag';
-    this.#cover = cover && cover.client && typeof cover.client.fetchCover === 'function' ? cover : null;
+    const coverClient = cover?.client;
+    this.#cover = coverClient
+      && typeof coverClient.submitCover === 'function'
+      && typeof coverClient.waitForJob === 'function'
+      && typeof coverClient.downloadAudio === 'function'
+      ? cover
+      : null;
     this.#accountId = accountId;
     this.#ownUserId = ownUserId;
     this.#statePath = textOf(statePath) || join(process.cwd(), 'wechat-personal-cursor.json');
+    this.#coverJobsPath = textOf(coverJobsPath)
+      || join(dirname(this.#statePath), `${this.#accountId}-cover-jobs.json`);
     this.#logger = logger ?? console;
     this.#now = now;
     this.#transcriptLimit = Number.isInteger(transcriptLimit) && transcriptLimit > 0 ? transcriptLimit : WECHAT_PERSONAL_TRANSCRIPT_LIMIT;
@@ -286,6 +301,9 @@ export class WechatPersonalGroupBridge {
     this.#abortController = new AbortController();
     await this.#preloadGroups();
     this.#loopPromise = this.#runLoop(this.#abortController.signal);
+    void this.#resumeCoverJobs().catch((error) => {
+      this.#logger.warn?.('[dsh-im:wechat-personal] unable to resume cover jobs:', error?.message ?? error);
+    });
     this.#logger.info?.('[dsh-im:wechat-personal] event bridge started', this.#cursor ? `(after ${this.#cursor})` : '(from now)');
   }
 
@@ -778,29 +796,144 @@ export class WechatPersonalGroupBridge {
     }
     const controller = new AbortController();
     this.#coverJobs.add(controller);
-    void (async () => {
-      try {
-        const result = await this.#cover.client.fetchCover({
-          url: coverCommand.url,
-          mix: coverCommand.mix,
-          prompt: coverCommand.prompt,
-          signal: controller.signal,
-        });
-        await this.#sendCoverResult({ event, result });
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        const message = coverFailedReply(String(error?.message ?? error).slice(0, 300));
-        this.#logger.warn?.('[dsh-im:wechat-personal] cover job failed:', error?.message ?? error);
+    void this.#runCoverJob({ event, coverCommand, controller });
+  }
+
+  /** 提交翻唱任务，把 jobId 持久化后再轮询；插件热重载后由 #resumeCoverJobs 继续。 */
+  async #runCoverJob({ event, coverCommand, controller }) {
+    let record = null;
+    try {
+      const jobId = await this.#cover.client.submitCover({
+        url: coverCommand.url,
+        mix: coverCommand.mix,
+        prompt: coverCommand.prompt,
+        signal: controller.signal,
+      });
+      record = {
+        jobId,
+        chatId: event.chatId,
+        groupName: textOf(event.groupName) || this.#groups.get(event.chatId)?.name || '',
+        mix: coverCommand.mix === true,
+        url: coverCommand.url,
+        startedAt: this.#now(),
+      };
+      this.#pendingCoverJobs.set(jobId, record);
+      await this.#saveCoverJobs();
+      const job = await this.#cover.client.waitForJob(jobId, { signal: controller.signal });
+      await this.#finishCover({ record, job, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      await this.#reportCoverFailure(event, error);
+    } finally {
+      this.#coverJobs.delete(controller);
+      // 只有正常结束（成功/失败）才移除记录；停止或热重载触发的 abort 保留记录，供下次启动恢复。
+      if (!controller.signal.aborted && record) await this.#forgetCoverJob(record.jobId);
+    }
+  }
+
+  /** 插件重启后恢复在途翻唱任务：继续轮询服务端 job，成功后补发文件。 */
+  async #resumeCoverJobs() {
+    if (!this.#cover) return;
+    const jobs = await this.#loadCoverJobs();
+    for (const record of jobs) {
+      if (!this.#running || this.#pendingCoverJobs.has(record.jobId)) continue;
+      this.#pendingCoverJobs.set(record.jobId, record);
+      const controller = new AbortController();
+      this.#coverJobs.add(controller);
+      this.#logger.info?.(`[dsh-im:wechat-personal] resuming cover job ${record.jobId}`);
+      void (async () => {
         try {
-          await this.#client.sendText({ threadId: event.chatId, text: message });
-          await this.#recordBotMessage({ chatId: event.chatId, text: message, groupName: event.groupName });
-        } catch (sendError) {
-          this.#logger.warn?.('[dsh-im:wechat-personal] unable to report cover failure:', sendError?.message ?? sendError);
+          const job = await this.#cover.client.waitForJob(record.jobId, { signal: controller.signal });
+          await this.#finishCover({ record, job, signal: controller.signal });
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          await this.#reportCoverFailure({ chatId: record.chatId, groupName: record.groupName }, error);
+        } finally {
+          this.#coverJobs.delete(controller);
+          if (!controller.signal.aborted) await this.#forgetCoverJob(record.jobId);
         }
-      } finally {
-        this.#coverJobs.delete(controller);
+      })();
+    }
+  }
+
+  /** 下载已完成任务的音频并作为文件发出。 */
+  async #finishCover({ record, job, signal }) {
+    const bytes = await this.#cover.client.downloadAudio(record.jobId, { signal });
+    const result = {
+      id: record.jobId,
+      bytes,
+      format: job?.format === 'wav' ? 'wav' : 'mp3',
+      title: typeof job?.title === 'string' ? job.title : '',
+      durationSeconds: Number.isFinite(job?.durationSeconds) ? job.durationSeconds : null,
+      bvid: typeof job?.bvid === 'string' ? job.bvid : '',
+      url: typeof job?.url === 'string' ? job.url : record.url,
+      mix: job?.mix === true,
+    };
+    await this.#sendCoverResult({ event: { chatId: record.chatId, groupName: record.groupName }, result });
+  }
+
+  /** 翻唱失败时回一条文字说明并记入群记忆。 */
+  async #reportCoverFailure(event, error) {
+    const message = coverFailedReply(String(error?.message ?? error).slice(0, 300));
+    this.#logger.warn?.('[dsh-im:wechat-personal] cover job failed:', error?.message ?? error);
+    try {
+      await this.#client.sendText({ threadId: event.chatId, text: message });
+      await this.#recordBotMessage({ chatId: event.chatId, text: message, groupName: event.groupName });
+    } catch (sendError) {
+      this.#logger.warn?.('[dsh-im:wechat-personal] unable to report cover failure:', sendError?.message ?? sendError);
+    }
+  }
+
+  /** 读取未完成的翻唱任务；文件缺失或损坏都 fail-soft。 */
+  async #loadCoverJobs() {
+    let parsed;
+    try {
+      parsed = JSON.parse(await readFile(this.#coverJobsPath, 'utf8'));
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        this.#logger.warn?.('[dsh-im:wechat-personal] unable to load cover jobs:', error?.message ?? error);
       }
-    })();
+      return [];
+    }
+    if (parsed?.version !== COVER_JOBS_DOCUMENT_VERSION || !Array.isArray(parsed.jobs)) return [];
+    const now = this.#now();
+    return parsed.jobs
+      .filter((job) => job
+        && typeof job.jobId === 'string' && job.jobId
+        && isGroupThreadId(job.chatId)
+        && Number.isFinite(job.startedAt)
+        && now - job.startedAt <= WECHAT_PERSONAL_COVER_JOB_RESUME_MAX_AGE_MS)
+      .map((job) => ({
+        jobId: job.jobId,
+        chatId: job.chatId,
+        groupName: textOf(job.groupName),
+        mix: job.mix === true,
+        url: textOf(job.url),
+        startedAt: job.startedAt,
+      }));
+  }
+
+  /** 原子写入在途翻唱任务，供插件重启后恢复。 */
+  async #saveCoverJobs() {
+    const document = {
+      version: COVER_JOBS_DOCUMENT_VERSION,
+      jobs: [...this.#pendingCoverJobs.values()].map((job) => ({ ...job })),
+      updatedAt: new Date(this.#now()).toISOString(),
+    };
+    try {
+      await mkdir(dirname(this.#coverJobsPath), { recursive: true, mode: 0o700 });
+      const temporary = `${this.#coverJobsPath}.${randomUUID()}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(document)}\n`, { encoding: 'utf8', mode: 0o600 });
+      await rename(temporary, this.#coverJobsPath);
+    } catch (error) {
+      await rm(`${this.#coverJobsPath}.${randomUUID()}.tmp`, { force: true }).catch(() => {});
+      this.#logger.warn?.('[dsh-im:wechat-personal] unable to save cover jobs:', error?.message ?? error);
+    }
+  }
+
+  async #forgetCoverJob(jobId) {
+    if (!this.#pendingCoverJobs.delete(jobId)) return;
+    await this.#saveCoverJobs();
   }
 
   /** 翻唱文件回传：上传 MP3 后以文件发送。 */
@@ -816,7 +949,13 @@ export class WechatPersonalGroupBridge {
     });
     const sourceId = typeof upload?.id === 'string' ? upload.id : '';
     if (!sourceId) throw new Error('翻唱文件上传未返回 id');
-    await this.#client.sendFile({ threadId: event.chatId, sourceId });
+    // 同一 job 的重试/恢复共用幂等键，避免热重载前后两个实例重复发文件。
+    const jobId = textOf(result?.id);
+    await this.#client.sendFile({
+      threadId: event.chatId,
+      sourceId,
+      ...(jobId ? { idempotencyKey: `dsh-im-cover-${jobId}` } : {}),
+    });
     // 不再额外发「翻唱完成」文字，避免刷频；文件本身就是结果，只在群记忆里留一条记录。
     const label = result?.mix === true ? '混音版' : '纯人声版';
     await this.#recordBotMessage({ chatId: event.chatId, text: `[翻唱] ${title}（${label}）`, groupName: event.groupName });

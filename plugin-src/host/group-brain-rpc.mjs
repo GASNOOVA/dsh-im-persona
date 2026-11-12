@@ -6,6 +6,7 @@
 // 静默窗口、整理间隔等），不需要重连机器人。
 
 import { readFile } from 'node:fs/promises';
+import { connect } from 'node:net';
 import {
   getGroupBrainSettingsStore,
   normalizeGroupBrainSettings,
@@ -44,6 +45,58 @@ function badRequest(message) {
   return { ok: false, error: { code: 'bad-request', message } };
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1']);
+
+function defaultPortFor(protocol) {
+  return protocol === 'https:' ? 443 : 80;
+}
+
+/**
+ * 检查服务地址是否指向本机端口：声音服务部署在远端 GPU 机器时，插件配置的
+ * `127.0.0.1:9860` 实际上是 SSH 隧道入口。设置页的「测试声音服务」和
+ * 「测试翻唱服务」先用这里的 TCP 探测区分「隧道没起来」和「服务本身报错」。
+ *
+ * 非本机地址（直连远端）视为不经过隧道，required=false，由后续真实请求判断。
+ *
+ * @param {string} serviceUrl
+ * @param {{timeoutMs?: number}} [options]
+ * @returns {Promise<{required: boolean, reachable: boolean, host: string, port: number}>}
+ */
+export async function probeTunnelEndpoint(serviceUrl, { timeoutMs = 2000 } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(serviceUrl);
+  } catch {
+    return { required: false, reachable: false, host: '', port: 0 };
+  }
+  const host = parsed.hostname.replace(/^\[/u, '').replace(/\]$/u, '');
+  const port = Number(parsed.port || defaultPortFor(parsed.protocol));
+  if (!LOOPBACK_HOSTNAMES.has(host.toLowerCase()) || !Number.isInteger(port) || port <= 0) {
+    return { required: false, reachable: false, host, port: Number.isInteger(port) ? port : 0 };
+  }
+  // localhost 可能被解析到 ::1；这里固定试 IPv4 回环，插件配置默认也是 127.0.0.1。
+  const target = host.toLowerCase() === 'localhost' ? '127.0.0.1' : host;
+  const reachable = await new Promise((resolve) => {
+    const socket = connect({ host: target, port });
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+  return { required: true, reachable, host, port };
+}
+
+function tunnelUnreachableMessage(label, tunnel) {
+  return `${label}测试失败：无法连接本地端口 ${tunnel.host}:${tunnel.port}，SSH 隧道未建立或已断开。`
+    + '请先在宿主机启动隧道（如 voice-hub-tunnel.sh），确认端口连通后重试。';
+}
+
 async function safeWechatPersonalStatus(manager) {
   if (!manager) return null;
   try {
@@ -72,6 +125,7 @@ function findBrain(channel, botId) {
  * @param {object} [options.store] - 测试注入。
  * @param {() => object[]} [options.listBrains] - 测试注入。
  * @param {() => Promise<void>} [options.reloadBrains] - 测试注入。
+ * @param {typeof probeTunnelEndpoint} [options.tunnelProbe] - 测试注入。
  */
 export function createGroupBrainRpcHandler({
   config = {},
@@ -82,6 +136,7 @@ export function createGroupBrainRpcHandler({
   wechatPersonalManager = null,
   voiceClientClass = null,
   coverClientClass = null,
+  tunnelProbe = probeTunnelEndpoint,
 } = {}) {
   const settingsStore = store ?? getGroupBrainSettingsStore(config);
   const manager = () => wechatPersonalManager ?? getWechatPersonalManager();
@@ -154,6 +209,13 @@ export function createGroupBrainRpcHandler({
         if (!serviceUrl) return badRequest('请先填写声音服务地址。');
         const style = payload.style === 'gentle' ? 'gentle' : 'cute';
         try {
+          const tunnel = await tunnelProbe(serviceUrl);
+          if (tunnel.required && !tunnel.reachable) {
+            return {
+              ok: false,
+              error: { code: 'voice-tunnel-unreachable', message: tunnelUnreachableMessage('声音服务', tunnel) },
+            };
+          }
           const VoiceClient = voiceClientClass ?? FeiyuVoiceClient;
           let apiKey = '';
           if (typeof payload.apiKeyPath === 'string' && payload.apiKeyPath.trim()) {
@@ -162,7 +224,7 @@ export function createGroupBrainRpcHandler({
           }
           const client = new VoiceClient({ baseUrl: serviceUrl, apiKey, timeoutMs: 120_000 });
           const bytes = await client.speak({ text: '你好，我是大肥鱼，语音服务连接正常。', style });
-          return { ok: true, value: { serviceUrl, style, byteLength: bytes.byteLength } };
+          return { ok: true, value: { serviceUrl, style, byteLength: bytes.byteLength, tunnel } };
         } catch (error) {
           return {
             ok: false,
@@ -175,6 +237,13 @@ export function createGroupBrainRpcHandler({
         const serviceUrl = typeof payload.serviceUrl === 'string' ? payload.serviceUrl.trim() : '';
         if (!serviceUrl) return badRequest('请先填写翻唱服务地址。');
         try {
+          const tunnel = await tunnelProbe(serviceUrl);
+          if (tunnel.required && !tunnel.reachable) {
+            return {
+              ok: false,
+              error: { code: 'cover-tunnel-unreachable', message: tunnelUnreachableMessage('翻唱服务', tunnel) },
+            };
+          }
           let apiKey = '';
           if (typeof payload.apiKeyPath === 'string' && payload.apiKeyPath.trim()) {
             apiKey = (await readFile(payload.apiKeyPath.trim(), 'utf8')).trim();
@@ -183,7 +252,7 @@ export function createGroupBrainRpcHandler({
           const CoverClient = coverClientClass ?? CoverServiceClient;
           const client = new CoverClient({ baseUrl: serviceUrl, apiKey });
           const health = await client.health();
-          return { ok: true, value: { serviceUrl, health } };
+          return { ok: true, value: { serviceUrl, health, tunnel } };
         } catch (error) {
           return {
             ok: false,
